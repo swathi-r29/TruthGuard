@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+venv/
+ENV/
+env/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local uploaded/temp files
+uploads/
+temp/
+*.pdf
+!sample_documents/**/*.pdf
+!sample_documents/*.pdf
+*.png
+*.jpg
+*.jpeg
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Pytest / Coverage cache
+.pytest_cache/
+.coverage
+htmlcov/

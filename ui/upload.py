@@ -1,0 +1,364 @@
+import streamlit as st
+import os
+from pathlib import Path
+import config
+from modules.document_processor import process_document
+from modules.ai_extraction import DocumentExtractor
+from modules.charge_detection import detect_charges
+from modules.financial_engine import calculate_real_cost_metrics
+from modules.analyzer import calculate_transparency_score, calculate_effective_rates
+from modules.explanation.explainer import get_simple_explanation, generate_math_example
+from modules.ai_extraction.client import OllamaConnectionError, OllamaModelNotFoundError
+
+def render_upload_page():
+    st.markdown(
+        """
+        <div style="text-align: center; padding: 40px 20px 20px 20px; background: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.08) 0%, rgba(7, 17, 31, 0) 70%); border-radius: 16px; border: 1px solid rgba(148, 163, 184, 0.08); margin-bottom: 35px; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+            <div style="font-size: 40px; margin-bottom: 15px;">🛡️</div>
+            <h1 style="margin: 0; background: linear-gradient(135deg, #F8FAFC 0%, #38BDF8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 36px; font-weight: 800; font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.03em;">Know What Your Loan REALLY Costs</h1>
+            <p style="margin: 15px auto 0 auto; color: #94A3B8; font-size: 14px; line-height: 1.6; max-width: 680px; font-family: 'Plus Jakarta Sans', sans-serif;">
+                Upload your loan agreement and let AI identify verified terms, hidden charges, risky conditions, and repayment opportunities.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    # Check AI Engine connection status
+    try:
+        extractor = DocumentExtractor()
+        llm_ok = extractor.client.check_connection()
+        model_name = extractor.client.model
+        model_ok = extractor.client.check_model_available() if llm_ok else False
+    except Exception:
+        llm_ok = False
+        model_name = "unknown"
+        model_ok = False
+
+    # Show LLM Status based on the selected provider
+    llm_provider = config.LLM_PROVIDER
+    if llm_provider == "gemini":
+        if not llm_ok:
+            st.markdown(
+                """
+                <div class="premium-card glow-border-rose" style="padding: 16px; background: rgba(244, 63, 94, 0.04); border: 1px solid rgba(244, 63, 94, 0.15);">
+                    <div style="font-weight: 700; color: #f43f5e; font-size: 14px; margin-bottom: 5px;">⚠️ Gemini API Connection Offline</div>
+                    <div style="color: #cbd5e1; font-size: 12px;">Please configure a valid <code>GEMINI_API_KEY</code> in your <code>.env</code> file to enable AI terms extraction.</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                f"""
+                <div class="premium-card glow-border-emerald" style="padding: 12px 18px; background: rgba(16, 185, 129, 0.02); display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+                    <div style="color: #10b981; font-size: 20px; font-weight: bold;">✓</div>
+                    <div>
+                        <div style="font-weight: 700; color: #ffffff; font-size: 13px;">Gemini AI Engine Online</div>
+                        <div style="color: #94a3b8; font-size: 11px; margin-top: 1px;">Model: <code>{model_name}</code></div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    else:
+        if not llm_ok:
+            st.markdown(
+                """
+                <div class="premium-card glow-border-rose" style="padding: 20px; background: rgba(244, 63, 94, 0.03);">
+                    <div style="font-weight: 700; color: #f43f5e; font-size: 14px; margin-bottom: 8px;">⚠️ Local AI Engine (Ollama) is Offline</div>
+                    <div style="color: #cbd5e1; font-size: 12px; line-height: 1.5;">
+                        Debt Detox runs terms extraction locally for privacy. Please follow these steps to start it:<br>
+                        1. Download and run <b>Ollama</b> from <a href="https://ollama.com" target="_blank" style="color: #818cf8; text-decoration: underline;">ollama.com</a>.<br>
+                        2. Run <code>ollama pull gemma2:2b</code> in your terminal.<br>
+                        3. Make sure Ollama is running at <code>http://localhost:11434</code>.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        elif not model_ok:
+            st.markdown(
+                f"""
+                <div class="premium-card glow-border-amber" style="padding: 20px; background: rgba(245, 158, 11, 0.03);">
+                    <div style="font-weight: 700; color: #f59e0b; font-size: 14px; margin-bottom: 8px;">⚠️ Model '{model_name}' Not Found</div>
+                    <div style="color: #cbd5e1; font-size: 12px; line-height: 1.5;">
+                        Ollama is online, but the model <code>{model_name}</code> is not installed.<br>
+                        Please run <code>ollama pull {model_name}</code> in your command prompt to download it.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                f"""
+                <div class="premium-card glow-border-emerald" style="padding: 12px 18px; background: rgba(16, 185, 129, 0.02); display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+                    <div style="color: #10b981; font-size: 20px; font-weight: bold;">✓</div>
+                    <div>
+                        <div style="font-weight: 700; color: #ffffff; font-size: 13px;">Local AI Engine Online</div>
+                        <div style="color: #94a3b8; font-size: 11px; margin-top: 1px;">Model: <code>{model_name}</code></div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    # File selection source
+    source = st.radio("Choose Document Source:", ["Use a Preloaded Sample Document", "Upload a New File"])
+
+    file_bytes = None
+    file_name = None
+
+    if source == "Use a Preloaded Sample Document":
+        sample_dir = Path("sample_documents")
+        if sample_dir.exists():
+            samples = [f for f in os.listdir(sample_dir) if f.endswith(".pdf")]
+            if samples:
+                selected_sample = st.selectbox("Select a sample document to analyze:", samples)
+                sample_path = sample_dir / selected_sample
+                if st.button("Analyze Selected Sample"):
+                    with open(sample_path, "rb") as f:
+                        file_bytes = f.read()
+                    file_name = selected_sample
+            else:
+                st.warning("No sample PDF files found in the `sample_documents` directory. Please run `sample_documents/generate_samples.py`.")
+        else:
+            st.warning("Sample documents folder not found.")
+            
+    else:
+        uploaded_file = st.file_uploader("Choose a PDF or Image file", type=["pdf", "png", "jpg", "jpeg"])
+        if uploaded_file is not None:
+            if st.button("Start AI Analysis"):
+                file_bytes = uploaded_file.read()
+                file_name = uploaded_file.name
+
+    if file_bytes and file_name:
+        run_analysis_pipeline(file_bytes, file_name)
+
+def run_analysis_pipeline(file_bytes: bytes, file_name: str):
+    status_container = st.empty()
+    
+    def render_pipeline_status(step_num, failed_at_step=None, partial_at_step=None):
+        steps = [
+            "Document Uploaded",
+            "Extracting Text",
+            "OCR Processing",
+            "AI Financial Analysis",
+            "Calculating True Cost",
+            "Generating Transparency Score"
+        ]
+        
+        html = "<div class='premium-card glow-border-cyan' style='padding: 24px; background: #0F1E33; border: 1px solid rgba(148,163,184,0.15);'>"
+        html += "<h3 style='margin-top:0; margin-bottom: 20px; font-size: 15px; color: #ffffff; font-family: \"Space Grotesk\", sans-serif; text-transform: uppercase; letter-spacing: 0.05em;'>⚙️ Analysis Execution Pipeline</h3>"
+        
+        for idx, name in enumerate(steps):
+            num = idx + 1
+            is_failed = (failed_at_step == num)
+            is_partial = (partial_at_step == num)
+            is_completed = (num < step_num) and (not failed_at_step or num < failed_at_step)
+            is_active = (num == step_num) and not failed_at_step
+            
+            if is_failed:
+                badge = "<span style='background-color: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; margin-right: 12px; font-weight: bold;'>✗</span>"
+                text_style = "color: #ef4444; font-weight: 600;"
+                border_style = "border-left: 3.5px solid #ef4444; box-shadow: 0 0 15px rgba(239,68,68,0.15);"
+            elif is_partial:
+                badge = "<span style='background-color: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; margin-right: 12px; font-weight: bold;'>!</span>"
+                text_style = "color: #f59e0b; font-weight: 600;"
+                border_style = "border-left: 3.5px solid #f59e0b;"
+            elif is_completed:
+                badge = "<span style='background-color: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; margin-right: 12px; font-weight: bold;'>✓</span>"
+                text_style = "color: #cbd5e1;"
+                border_style = "border-left: 3.5px solid #10b981;"
+            elif is_active:
+                badge = "<span style='background-color: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56,189,248,0.5); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; margin-right: 12px; font-weight: bold; animation: pulse_cyan 1.5s infinite;'>●</span>"
+                text_style = "color: #ffffff; font-weight: 600;"
+                border_style = "border-left: 3.5px solid #38bdf8; box-shadow: 0 0 15px rgba(56,189,248,0.15);"
+            else:
+                badge = f"<span style='background-color: rgba(255, 255, 255, 0.03); color: #94a3b8; border: 1px solid rgba(255,255,255,0.06); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; margin-right: 12px; font-weight: bold;'>{num}</span>"
+                text_style = "color: #475569;"
+                border_style = "border-left: 3.5px solid rgba(255,255,255,0.03);"
+                
+            html += f"""
+            <div style='display: flex; align-items: center; padding: 12px 18px; margin-bottom: 10px; border-radius: 8px; {border_style} background: rgba(255,255,255,0.015); border: 1px solid rgba(148,163,184,0.08);'>
+                {badge}
+                <span style='{text_style} font-size: 13.5px;'>{name}</span>
+            </div>
+            """
+        html += "</div>"
+        
+        status_container.markdown(
+            f"""
+            <style>
+            @keyframes pulse_cyan {{
+                0% {{ box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.4); }}
+                70% {{ box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }}
+                100% {{ box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }}
+            }}
+            </style>
+            {html}
+            """,
+            unsafe_allow_html=True
+        )
+
+    try:
+        # Step 1: Document Uploaded
+        render_pipeline_status(1)
+        doc_result = process_document(file_bytes, file_name)
+        if not doc_result.get("success"):
+            render_pipeline_status(1, failed_at_step=1)
+            st.error(f"Failed to process document: {doc_result.get('error')}")
+            st.session_state.audit_status = "FAILED"
+            st.session_state.doc_name = file_name
+            return
+            
+        pages = doc_result["pages"]
+        total_pages = doc_result["total_pages"]
+        ocr_used = doc_result["ocr_used"]
+        
+        # Step 2: Extracting Text
+        render_pipeline_status(2)
+        try:
+            extractor = DocumentExtractor()
+            extracted = extractor.extract_from_pages(pages)
+        except Exception as e:
+            render_pipeline_status(2, failed_at_step=2)
+            st.error(f"Failed to extract document text: {str(e)}")
+            st.session_state.audit_status = "FAILED"
+            st.session_state.doc_name = file_name
+            return
+        
+        # Step 3: OCR Processing
+        render_pipeline_status(3)
+        try:
+            charges = detect_charges(extracted, pages)
+        except Exception as e:
+            render_pipeline_status(3, failed_at_step=3)
+            st.error(f"Failed to process OCR/charges mapping: {str(e)}")
+            st.session_state.audit_status = "FAILED"
+            st.session_state.doc_name = file_name
+            return
+        
+        # Step 4: AI Financial Analysis
+        render_pipeline_status(4)
+        try:
+            # Try to parse standard values, fallback if missing
+            principal = extracted.loan_amount.value or 0.0
+            rate = extracted.interest_rate.value or 0.0
+            tenure = int(extracted.tenure.value) if extracted.tenure.value else 0
+            emi = extracted.emi.value or 0.0
+            interest_type = extracted.interest_type.value or "reducing_balance"
+            outstanding = extracted.outstanding_principal.value if (hasattr(extracted, 'outstanding_principal') and extracted.outstanding_principal) else None
+            
+            metrics = calculate_real_cost_metrics(
+                principal=principal,
+                interest_rate_annual=rate,
+                tenure_months=tenure,
+                charges=charges,
+                interest_type=interest_type,
+                override_emi=emi if emi > 0 else None,
+                tax_rate_percent=18.0,  # Default to 18% standard GST
+                outstanding_principal=outstanding
+            )
+        except Exception as e:
+            render_pipeline_status(4, failed_at_step=4)
+            st.error(f"Failed during financial terms calculations: {str(e)}")
+            st.session_state.audit_status = "FAILED"
+            st.session_state.doc_name = file_name
+            return
+            
+        # Step 5: Calculating True Cost
+        render_pipeline_status(5)
+        try:
+            # Compute APR (Effective Annual Cost Rate)
+            effective_rates = calculate_effective_rates(
+                net_disbursed=metrics["net_disbursed_amount"],
+                emi=metrics["emi"],
+                tenure_months=metrics["tenure_months"]
+            )
+            transparency = calculate_transparency_score(metrics, charges, total_pages)
+        except Exception as e:
+            render_pipeline_status(5, failed_at_step=5)
+            st.error(f"Failed to calculate true cost metrics: {str(e)}")
+            st.session_state.audit_status = "FAILED"
+            st.session_state.doc_name = file_name
+            return
+        
+        # Step 6: Generating Transparency Score
+        render_pipeline_status(6)
+        try:
+            explanations = {}
+            math_examples = {}
+            for c in charges:
+                canonical_name = c["canonical_name"]
+                evidence = c["evidence"]
+                val = c["value"]
+                unit = c["unit"]
+                basis = c["basis"]
+                
+                explanations[canonical_name] = get_simple_explanation(canonical_name, evidence)
+                math_examples[canonical_name] = generate_math_example(canonical_name, val, unit, basis)
+        except Exception as e:
+            render_pipeline_status(6, failed_at_step=6)
+            st.error(f"Failed to build transparency results: {str(e)}")
+            st.session_state.audit_status = "FAILED"
+            st.session_state.doc_name = file_name
+            return
+            
+        status_container.empty()
+        
+        # Determine overall audit status
+        has_principal = (principal > 0.0)
+        has_rate = (rate > 0.0)
+        has_tenure = (tenure > 0)
+        
+        if not has_principal and not has_rate and not has_tenure:
+            audit_status = "FAILED"
+        elif not has_principal or not has_rate or not has_tenure:
+            audit_status = "PARTIAL"
+        else:
+            audit_status = "VERIFIED"
+            
+        # Save results to session state
+        st.session_state.doc_name = file_name
+        st.session_state.doc_type = doc_result.get("file_type", "")
+        st.session_state.total_pages = total_pages
+        st.session_state.ocr_used = ocr_used
+        st.session_state.extracted = extracted
+        st.session_state.charges = charges
+        st.session_state.metrics = metrics
+        st.session_state.effective_rates = effective_rates
+        st.session_state.transparency = transparency
+        st.session_state.explanations = explanations
+        st.session_state.math_examples = math_examples
+        st.session_state.audit_status = audit_status
+        
+        # Success message with quick instructions
+        st.balloons()
+        
+        status_badge_color = "#10b981" if audit_status == "VERIFIED" else "#f59e0b"
+        st.markdown(
+            f"""
+            <div class="premium-card glow-border-emerald" style="background: rgba(16, 185, 129, 0.02); margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div style="font-weight: 700; color: #10b981; font-size: 16px;">🎉 Analysis Complete!</div>
+                    <span style="background-color: {status_badge_color}1a; color: {status_badge_color}; border: 1px solid {status_badge_color}33; font-size: 10px; padding: 2px 10px; border-radius: 12px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;">{audit_status}</span>
+                </div>
+                <div style="color: #cbd5e1; font-size: 13px; line-height: 1.5;">
+                    Successfully analyzed <b>{file_name}</b>.<br>
+                    Please navigate to the <b>Loan Truth Dashboard</b> or <b>Charges & Hidden Costs</b> tab in the sidebar menu to view your detailed audit.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+    except Exception as e:
+        st.session_state.audit_status = "FAILED"
+        st.session_state.doc_name = file_name
+        status_container.empty()
+        st.error(f"An unexpected error occurred during pipeline execution: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+
