@@ -50,15 +50,16 @@ def detect_charges(extracted_result: LoanExtractionResult, pages: List[Dict[str,
             
             detected.append({
                 "canonical_name": canonical_name,
-                "original_name": original_name,
+                "original_name": getattr(field_data, "original_term", None) or original_name,
                 "value": field_data.value,
                 "unit": unit,
                 "basis": field_data.basis or "flat",
-                "page": field_data.page,
+                "page": field_data.page or 1,
                 "evidence": field_data.evidence or "Found in extracted terms.",
                 "classification": classification,
                 "is_mandatory": is_mandatory,
                 "is_conditional": is_conditional,
+                "status": getattr(field_data, "status", "VERIFIED"),
                 "source": "ai_extraction"
             })
             
@@ -74,7 +75,7 @@ def detect_charges(extracted_result: LoanExtractionResult, pages: List[Dict[str,
             
             detected.append({
                 "canonical_name": name_normalized,
-                "original_name": charge.name,
+                "original_name": getattr(charge, "original_term", None) or charge.name,
                 "value": charge.value,
                 "unit": charge.unit or "currency",
                 "basis": charge.basis or "flat",
@@ -83,16 +84,15 @@ def detect_charges(extracted_result: LoanExtractionResult, pages: List[Dict[str,
                 "classification": classification,
                 "is_mandatory": is_mandatory,
                 "is_conditional": is_conditional,
+                "status": getattr(charge, "status", "VERIFIED"),
                 "source": "ai_extraction"
             })
             
-    # 3. Hybrid keyword check: Scan text for keywords not extracted by the LLM
+    # 3. Hybrid keyword check: Scan text for keywords not extracted with values
     for canonical_name, patterns in KEYWORDS_MAPPING.items():
-        # Skip if already successfully extracted by LLM
         if canonical_name in processed_keys or any(d["canonical_name"] == canonical_name for d in detected):
             continue
             
-        # Scan page-by-page
         for page in pages:
             text = page.get("text", "")
             page_num = page.get("page_number", 1)
@@ -100,21 +100,19 @@ def detect_charges(extracted_result: LoanExtractionResult, pages: List[Dict[str,
             for pattern in patterns:
                 match = re.search(pattern, text, re.IGNORECASE)
                 if match:
-                    # Found a keyword reference that wasn't extracted with a value
                     classification = classify_charge(canonical_name)
                     is_mandatory = classification in ["BASE_COST", "ADDITIONAL_COST", "TAX"]
                     is_conditional = classification in ["CONDITIONAL_COST", "PENALTY"]
                     
-                    # Extract surrounding sentence/context
                     start_idx = max(0, match.start() - 40)
                     end_idx = min(len(text), match.end() + 80)
-                    context_snippet = text[start_idx:end_idx].strip()
+                    context_snippet = text[start_idx:end_idx].strip().replace("\n", " ")
                     context_sentence = f"...{context_snippet}..."
                     
                     detected.append({
                         "canonical_name": canonical_name,
-                        "original_name": canonical_name.replace("_", " ").title(),
-                        "value": None, # Mentioned but no value known
+                        "original_name": match.group(0).strip().title(),
+                        "value": None,
                         "unit": "unknown",
                         "basis": "unknown",
                         "page": page_num,
@@ -122,12 +120,12 @@ def detect_charges(extracted_result: LoanExtractionResult, pages: List[Dict[str,
                         "classification": classification,
                         "is_mandatory": is_mandatory,
                         "is_conditional": is_conditional,
+                        "status": "MENTIONED-BUT-NOT-SPECIFIED",
                         "source": "keyword_reference"
                     })
-                    # Avoid adding duplicate references for the same charge type
                     break
             else:
                 continue
-            break # break outer loop if already added for this canonical name
+            break
             
     return detected

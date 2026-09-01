@@ -120,17 +120,8 @@ def process_document(file_bytes: bytes, file_name: str) -> dict:
                         cleaned_text = clean_text(ocr_text)
                         ocr_used = True
                     except TesseractNotInstalledError as t_err:
-                        doc.close()
-                        return {
-                            "success": False,
-                            "error": str(t_err),
-                            "file_name": file_name,
-                            "file_type": ext,
-                            "total_pages": 0,
-                            "ocr_used": False,
-                            "pages": [],
-                            "full_text": ""
-                        }
+                        import logging
+                        logging.warning(f"Tesseract OCR not installed, relying on native text for page {idx + 1}: {t_err}")
                     except Exception as e:
                         # If image conversion or unexpected OCR error occurs, log it and keep whatever text was there (or empty)
                         import logging

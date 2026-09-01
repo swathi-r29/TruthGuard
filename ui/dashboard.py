@@ -1,6 +1,34 @@
 import streamlit as st
-
+import pandas as pd
 import plotly.graph_objects as go
+
+def generate_amortization_schedule(principal: float, annual_rate: float, tenure: float, emi: float):
+    schedule = []
+    outstanding = principal
+    monthly_rate = (annual_rate / 100.0) / 12.0
+    
+    for month in range(1, int(tenure) + 1):
+        if outstanding <= 0:
+            break
+        interest = outstanding * monthly_rate
+        p_pay = emi - interest
+        if p_pay > outstanding or month == int(tenure):
+            p_pay = outstanding
+            actual_emi = p_pay + interest
+        else:
+            actual_emi = emi
+            
+        outstanding_new = outstanding - p_pay
+        schedule.append({
+            "Month": month,
+            "EMI": actual_emi,
+            "Interest Paid": interest,
+            "Principal Repaid": p_pay,
+            "Outstanding Balance": max(0.0, outstanding_new)
+        })
+        outstanding = outstanding_new
+        
+    return schedule
 
 def render_dashboard_page():
     st.markdown(
@@ -28,9 +56,9 @@ def render_dashboard_page():
         )
         return
 
-    metrics = st.session_state.metrics
-    effective_rates = st.session_state.effective_rates
-    transparency = st.session_state.transparency
+    metrics = st.session_state.metrics or {}
+    effective_rates = st.session_state.get("effective_rates") or {}
+    transparency = st.session_state.get("transparency") or {}
     doc_name = st.session_state.doc_name
     doc_type = st.session_state.doc_type
     total_pages = st.session_state.total_pages
@@ -280,7 +308,7 @@ def render_dashboard_page():
         )
         
     with col_c:
-        eff_rate = effective_rates.get('effective_annual_cost_rate')
+        eff_rate = effective_rates.get('effective_annual_cost_rate') if isinstance(effective_rates, dict) else None
         rate_val = f"{eff_rate:.2f}%" if eff_rate is not None else "N/A"
         st.markdown(
             f"""
@@ -295,22 +323,178 @@ def render_dashboard_page():
             unsafe_allow_html=True
         )
         
-    # Detail comparison of nominal vs effective
-    if eff_rate is not None:
-        nominal = metrics['interest_rate_annual']
-        inflation_factor = eff_rate - nominal
-        if inflation_factor > 0.05:
+    # Comprehensive APR Calculation & Mathematical Audit Transparency
+    p = float(metrics.get('loan_amount', 0.0) or 0.0)
+    net = float(metrics.get('net_disbursed_amount', 0.0) or 0.0)
+    nominal = float(metrics.get('interest_rate_annual', 0.0) or 0.0)
+    eff_rate = effective_rates.get('effective_annual_cost_rate') if isinstance(effective_rates, dict) else None
+    upfront = float(metrics.get('upfront_fees', 0.0) or 0.0)
+    taxes = float(metrics.get('taxes_on_fees', 0.0) or 0.0)
+    tot_deductions = upfront + taxes
+    currency = "₹"
+
+    st.markdown(
+        """
+        <h3 style="margin-top: 35px; margin-bottom: 15px; font-size: 18px; font-family: 'Space Grotesk', sans-serif; font-weight: 700; color: #F8FAFC;">
+            🧮 APR Calculation & Mathematical Audit Transparency
+        </h3>
+        """,
+        unsafe_allow_html=True
+    )
+
+    with st.expander("📊 Step-by-Step Mathematical Audit & Formula Breakdown", expanded=True):
+        st.markdown(
+            f"""
+            <div style="background: #0A1628; border: 1px solid rgba(148,163,184,0.15); border-radius: 12px; padding: 20px; margin-bottom: 15px;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                    <div style="background: rgba(99, 102, 241, 0.05); padding: 14px; border-radius: 10px; border: 1px solid rgba(99, 102, 241, 0.2);">
+                        <div style="font-size: 11px; color: #94A3B8; font-weight: 700; text-transform: uppercase;">1. Sanctioned Principal (P)</div>
+                        <div style="font-size: 20px; font-weight: 800; color: #6366F1; margin-top: 4px;">{currency}{p:,.2f}</div>
+                        <div style="font-size: 11px; color: #cbd5e1; margin-top: 2px;">Contract face value</div>
+                    </div>
+                    <div style="background: rgba(239, 68, 68, 0.05); padding: 14px; border-radius: 10px; border: 1px solid rgba(239, 68, 68, 0.2);">
+                        <div style="font-size: 11px; color: #94A3B8; font-weight: 700; text-transform: uppercase;">2. Upfront Deductions (D)</div>
+                        <div style="font-size: 20px; font-weight: 800; color: #EF4444; margin-top: 4px;">-{currency}{tot_deductions:,.2f}</div>
+                        <div style="font-size: 11px; color: #cbd5e1; margin-top: 2px;">Processing + Stamp Duty + GST</div>
+                    </div>
+                    <div style="background: rgba(16, 185, 129, 0.05); padding: 14px; border-radius: 10px; border: 1px solid rgba(16, 185, 129, 0.2);">
+                        <div style="font-size: 11px; color: #94A3B8; font-weight: 700; text-transform: uppercase;">3. Net Disbursed Cash (N)</div>
+                        <div style="font-size: 20px; font-weight: 800; color: #10B981; margin-top: 4px;">{currency}{net:,.2f}</div>
+                        <div style="font-size: 11px; color: #cbd5e1; margin-top: 2px;">Actual payout received</div>
+                    </div>
+                    <div style="background: rgba(56, 189, 248, 0.05); padding: 14px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.2);">
+                        <div style="font-size: 11px; color: #94A3B8; font-weight: 700; text-transform: uppercase;">4. Real Effective APR</div>
+                        <div style="font-size: 20px; font-weight: 800; color: #38BDF8; margin-top: 4px;">{f'{eff_rate:.2f}%' if eff_rate is not None else 'N/A'}</div>
+                        <div style="font-size: 11px; color: #cbd5e1; margin-top: 2px;">Advertised Nominal: {nominal}%</div>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.markdown("**📐 Actuarial Formula & IRR Cash Flow Equation:**")
+        st.latex(r"\text{Net Disbursed Cash } N = \sum_{t=1}^{n} \frac{\text{EMI}_t}{(1 + r_{\text{monthly}})^t}")
+        st.latex(r"\text{Effective APR} = \left((1 + r_{\text{monthly}})^{12} - 1\right) \times 100\%")
+
+        if eff_rate is not None and nominal > 0:
+            diff = eff_rate - nominal
+            if diff > 0.05:
+                st.markdown(
+                    f"""
+                    <div class="premium-card glow-border-amber" style="background: rgba(245, 158, 11, 0.03); padding: 16px; margin-top: 15px;">
+                        <div style="font-size: 13.5px; color: #cbd5e1; line-height: 1.6;">
+                            ⚠️ <b>APR Inflation Warning</b>: Your real annualized cost rate is <b>+{diff:.2f}% higher</b> than the advertised {nominal}% p.a. rate.<br>
+                            <b>Audit Explainability Rationale</b>: Upfront deductions of {currency}{tot_deductions:,.2f} lower the actual capital in your hands to {currency}{net:,.2f}, 
+                            yet your monthly EMIs are calculated on the full face amount of {currency}{p:,.2f}. This upfront capital reduction increases your effective interest yield.
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+    # Compliance Alerts Widget
+    from modules.analyzer.compliance import check_regulatory_compliance
+    compliance_alerts = check_regulatory_compliance(metrics, charges)
+    if compliance_alerts:
+        st.markdown(
+            """
+            <h3 style="margin-top: 30px; margin-bottom: 20px; font-size: 18px; font-family: 'Space Grotesk', sans-serif; font-weight: 700;">⚖️ Regulatory Compliance Alerts</h3>
+            """,
+            unsafe_allow_html=True
+        )
+        for alert in compliance_alerts:
+            sev = alert["severity"]
+            if sev == "CRITICAL":
+                glow = "glow-border-rose"
+                bg = "rgba(239, 68, 68, 0.03)"
+                color = "#ef4444"
+                icon = "🚨"
+            elif sev == "WARNING":
+                glow = "glow-border-amber"
+                bg = "rgba(245, 158, 11, 0.02)"
+                color = "#f59e0b"
+                icon = "⚠️"
+            else:
+                glow = "glow-border-indigo"
+                bg = "rgba(99, 102, 241, 0.02)"
+                color = "#6366f1"
+                icon = "ℹ️"
+                
             st.markdown(
                 f"""
-                <div class="premium-card glow-border-amber" style="background: rgba(245, 158, 11, 0.03); padding: 15px; margin-bottom: 20px;">
-                    <div style="font-size: 13px; color: #cbd5e1; line-height: 1.5;">
-                        ℹ️ <b>Effective rate is {inflation_factor:.2f}% higher</b> than your stated interest rate of {nominal}% p.a.
-                        This markup is driven by upfront processing fees and taxes deducted from your principal before disbursement.
+                <div class="premium-card {glow}" style="background: {bg}; padding: 18px; margin-bottom: 15px; border-left: 4px solid {color};">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; flex-wrap: wrap; gap: 8px;">
+                        <span style="font-weight: 700; color: {color}; font-size: 14px; font-family: 'Space Grotesk', sans-serif;">{icon} {alert['title']}</span>
+                        <span style="font-size: 9px; background: rgba(255,255,255,0.04); color: #94a3b8; padding: 2px 8px; border-radius: 4px; font-family: monospace;">{alert['law_reference']}</span>
                     </div>
+                    <div style="font-size: 13px; color: #cbd5e1; line-height: 1.5; margin-bottom: 6px;">{alert['description']}</div>
+                    <div style="font-size: 12px; color: #94a3b8; font-style: italic;"><b>Impact:</b> {alert['impact']}</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
+
+    # Amortization visualizer
+    st.markdown(
+        """
+        <h3 style="margin-top: 30px; margin-bottom: 20px; font-size: 18px; font-family: 'Space Grotesk', sans-serif; font-weight: 700;">📈 Loan Amortization Schedule</h3>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    schedule = generate_amortization_schedule(
+        metrics["loan_amount"],
+        metrics["interest_rate_annual"],
+        metrics["tenure_months"],
+        metrics["emi"]
+    )
+    
+    if schedule:
+        df_sched = pd.DataFrame(schedule)
+        
+        # Plot outstanding balance
+        fig_amort = go.Figure()
+        fig_amort.add_trace(go.Scatter(
+            x=df_sched["Month"],
+            y=df_sched["Outstanding Balance"],
+            mode='lines',
+            name='Outstanding Balance',
+            line=dict(color='#06b6d4', width=3),
+            fill='tozeroy',
+            fillcolor='rgba(6, 182, 212, 0.04)',
+            hovertemplate="Month %{x}<br>Balance: ₹%{y:,.2f}<extra></extra>"
+        ))
+        
+        fig_amort.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font_color='#cbd5e1',
+            font_family="Plus Jakarta Sans",
+            height=260,
+            margin=dict(l=10, r=10, t=10, b=10),
+            xaxis=dict(
+                title="Repayment Month",
+                showgrid=False,
+                linecolor='rgba(255,255,255,0.08)'
+            ),
+            yaxis=dict(
+                title=f"Outstanding Balance ({currency})",
+                showgrid=True,
+                gridcolor='rgba(255,255,255,0.04)',
+                linecolor='rgba(255,255,255,0.08)'
+            )
+        )
+        st.plotly_chart(fig_amort, use_container_width=True, config={'displayModeBar': False})
+        
+        # Expander with details table
+        with st.expander("🔍 View Month-by-Month Repayment Breakdown Table"):
+            df_formatted = df_sched.copy()
+            df_formatted["EMI"] = df_formatted["EMI"].map(lambda x: f"₹{x:,.2f}")
+            df_formatted["Interest Paid"] = df_formatted["Interest Paid"].map(lambda x: f"₹{x:,.2f}")
+            df_formatted["Principal Repaid"] = df_formatted["Principal Repaid"].map(lambda x: f"₹{x:,.2f}")
+            df_formatted["Outstanding Balance"] = df_formatted["Outstanding Balance"].map(lambda x: f"₹{x:,.2f}")
+            st.dataframe(df_formatted, use_container_width=True, hide_index=True)
 
     # Row 3: Transparency Score
     st.markdown(

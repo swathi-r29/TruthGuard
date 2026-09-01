@@ -18,9 +18,7 @@ def run_validation():
     
     # 1. Locate the validation document
     possible_paths = [
-        "DebtDetox_Validation_Loan_Agreement.pdf",
-        "sample_documents/debt_detox_sample_loan.pdf", # fallback to existing sample if validation file not present
-        "../DebtDetox_Validation_Loan_Agreement.pdf"
+        "DebtDetox_Validation_Loan_Agreement.pdf"
     ]
     
     pdf_path = None

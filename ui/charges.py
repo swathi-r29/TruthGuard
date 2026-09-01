@@ -47,6 +47,20 @@ def render_charges_page():
             unsafe_allow_html=True
         )
 
+    if "charges" not in st.session_state or st.session_state.charges is None:
+        st.markdown(
+            """
+            <div class="premium-card glow-border-amber" style="background: rgba(245, 158, 11, 0.02); padding: 24px; margin-bottom: 25px;">
+                <div style="font-weight: 700; color: #f59e0b; font-size: 16px; margin-bottom: 8px;">⚠️ No Document Analyzed Yet</div>
+                <div style="color: #cbd5e1; font-size: 13px; line-height: 1.5;">
+                    Please go to the <b>Upload & Analyze</b> page and process a loan agreement to view detected charges.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        return
+
     charges = st.session_state.charges
     metrics = st.session_state.metrics
     explanations = st.session_state.explanations
@@ -124,31 +138,41 @@ def render_charges_page():
         unsafe_allow_html=True
     )
 
+    # Safely extract metrics values with defaults
+    metrics_data = metrics or {}
+    net_disbursed = float(metrics_data.get('net_disbursed_amount', 0.0) or 0.0)
+    upfront_fees = float(metrics_data.get('upfront_fees', 0.0) or 0.0)
+    taxes_on_fees = float(metrics_data.get('taxes_on_fees', 0.0) or 0.0)
+    loan_amount = float(metrics_data.get('loan_amount', 0.0) or 0.0)
+    total_interest = float(metrics_data.get('total_interest', 0.0) or 0.0)
+    total_repayment = float(metrics_data.get('total_scheduled_repayment', 0.0) or 0.0)
+    mandatory_recurring = float(metrics_data.get('mandatory_recurring_fees', 0.0) or 0.0)
+
     # Build and show Sankey Diagram
     labels = [
-        f"Disbursed Cash<br>{currency}{metrics['net_disbursed_amount']:,.0f}", # 0
-        f"Upfront Fees<br>{currency}{metrics['upfront_fees']:,.0f}", # 1
-        f"Taxes on Fees<br>{currency}{metrics['taxes_on_fees']:,.0f}", # 2
-        f"Loan Principal<br>{currency}{metrics['loan_amount']:,.0f}", # 3
-        f"Interest Cost<br>{currency}{metrics['total_interest']:,.0f}", # 4
-        f"Total Repayment<br>{currency}{metrics['total_scheduled_repayment']:,.0f}" # 5
+        f"Disbursed Cash<br>{currency}{net_disbursed:,.0f}", # 0
+        f"Upfront Fees<br>{currency}{upfront_fees:,.0f}", # 1
+        f"Taxes on Fees<br>{currency}{taxes_on_fees:,.0f}", # 2
+        f"Loan Principal<br>{currency}{loan_amount:,.0f}", # 3
+        f"Interest Cost<br>{currency}{total_interest:,.0f}", # 4
+        f"Total Repayment<br>{currency}{total_repayment:,.0f}" # 5
     ]
     sources = [0, 1, 2, 3, 4]
     targets = [3, 3, 3, 5, 5]
     values = [
-        metrics['net_disbursed_amount'],
-        metrics['upfront_fees'],
-        metrics['taxes_on_fees'],
-        metrics['loan_amount'],
-        metrics['total_interest']
+        net_disbursed,
+        upfront_fees,
+        taxes_on_fees,
+        loan_amount,
+        total_interest
     ]
 
     # Add mandatory recurring fees if any
-    if metrics.get('mandatory_recurring_fees', 0) > 0:
-        labels.append(f"Recurring Fees<br>{currency}{metrics['mandatory_recurring_fees']:,.0f}") # 6
+    if mandatory_recurring > 0:
+        labels.append(f"Recurring Fees<br>{currency}{mandatory_recurring:,.0f}") # 6
         sources.append(6)
         targets.append(5)
-        values.append(metrics['mandatory_recurring_fees'])
+        values.append(mandatory_recurring)
 
     fig_sankey = go.Figure(data=[go.Sankey(
         node = dict(

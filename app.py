@@ -6,6 +6,7 @@ from ui.evidence import render_evidence_page
 from ui.comparison import render_comparison_page
 from ui.simulator import render_simulator_page
 from ui.report import render_report_page
+from ui.chatbot import render_chatbot_page
 
 # Set up Streamlit Page Configuration
 st.set_page_config(
@@ -406,8 +407,25 @@ menu_options = [
     "🔎 Verification Evidence",
     "⚖️ Multi-Debt Strategy",
     "🧮 Payoff Simulator",
-    "📋 Download Report"
+    "📋 Download Report",
+    "💬 AI Loan Assistant"
 ]
+
+# Auto-initialize session state on first load if no metrics exist
+if st.session_state.metrics is None and "auto_initialized" not in st.session_state:
+    st.session_state.auto_initialized = True
+    from pathlib import Path
+    from ui.upload import run_analysis_pipeline
+    sample_path = Path("sample_documents/debt_detox_sample_loan.pdf")
+    if not sample_path.exists():
+        sample_path = Path("DebtDetox_Validation_Loan_Agreement.pdf")
+    if sample_path.exists():
+        try:
+            with open(sample_path, "rb") as f:
+                f_bytes = f.read()
+            run_analysis_pipeline(f_bytes, sample_path.name)
+        except Exception:
+            pass
 
 selected_menu = st.sidebar.radio("Navigation Menu:", menu_options)
 
@@ -426,6 +444,8 @@ elif selected_menu == "🧮 Payoff Simulator":
     render_simulator_page()
 elif selected_menu == "📋 Download Report":
     render_report_page()
+elif selected_menu == "💬 AI Loan Assistant":
+    render_chatbot_page()
 
 # Sidebar Footer
 st.sidebar.markdown("---")

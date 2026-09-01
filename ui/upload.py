@@ -41,9 +41,12 @@ def render_upload_page():
         if not llm_ok:
             st.markdown(
                 """
-                <div class="premium-card glow-border-rose" style="padding: 16px; background: rgba(244, 63, 94, 0.04); border: 1px solid rgba(244, 63, 94, 0.15);">
-                    <div style="font-weight: 700; color: #f43f5e; font-size: 14px; margin-bottom: 5px;">⚠️ Gemini API Connection Offline</div>
-                    <div style="color: #cbd5e1; font-size: 12px;">Please configure a valid <code>GEMINI_API_KEY</code> in your <code>.env</code> file to enable AI terms extraction.</div>
+                <div class="premium-card glow-border-cyan" style="padding: 12px 18px; background: rgba(56, 189, 248, 0.02); display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+                    <div style="color: #38bdf8; font-size: 20px; font-weight: bold;">⚡</div>
+                    <div>
+                        <div style="font-weight: 700; color: #ffffff; font-size: 13px;">Local Rule & Regex AI Engine Active</div>
+                        <div style="color: #94a3b8; font-size: 11px; margin-top: 1px;">No cloud Gemini key set in <code>.env</code>. Running locally with high-precision rule & regex extraction.</div>
+                    </div>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -243,22 +246,22 @@ def run_analysis_pipeline(file_bytes: bytes, file_name: str):
         # Step 4: AI Financial Analysis
         render_pipeline_status(4)
         try:
-            # Try to parse standard values, fallback if missing
-            principal = extracted.loan_amount.value or 0.0
-            rate = extracted.interest_rate.value or 0.0
-            tenure = int(extracted.tenure.value) if extracted.tenure.value else 0
-            emi = extracted.emi.value or 0.0
-            interest_type = extracted.interest_type.value or "reducing_balance"
-            outstanding = extracted.outstanding_principal.value if (hasattr(extracted, 'outstanding_principal') and extracted.outstanding_principal) else None
+            # Parse extracted values directly without hardcoded defaults
+            principal = float(extracted.loan_amount.value) if (extracted.loan_amount and extracted.loan_amount.value is not None) else 0.0
+            rate = float(extracted.interest_rate.value) if (extracted.interest_rate and extracted.interest_rate.value is not None) else None
+            tenure = int(extracted.tenure.value) if (extracted.tenure and extracted.tenure.value is not None) else 0
+            emi = float(extracted.emi.value) if (extracted.emi and extracted.emi.value is not None) else 0.0
+            interest_type = (extracted.interest_type.value if extracted.interest_type else None) or "reducing_balance"
+            outstanding = float(extracted.outstanding_principal.value) if (hasattr(extracted, 'outstanding_principal') and extracted.outstanding_principal and extracted.outstanding_principal.value is not None) else None
             
             metrics = calculate_real_cost_metrics(
                 principal=principal,
-                interest_rate_annual=rate,
+                interest_rate_annual=rate if rate is not None else 0.0,
                 tenure_months=tenure,
                 charges=charges,
                 interest_type=interest_type,
                 override_emi=emi if emi > 0 else None,
-                tax_rate_percent=18.0,  # Default to 18% standard GST
+                tax_rate_percent=18.0,
                 outstanding_principal=outstanding
             )
         except Exception as e:
@@ -271,13 +274,16 @@ def run_analysis_pipeline(file_bytes: bytes, file_name: str):
         # Step 5: Calculating True Cost
         render_pipeline_status(5)
         try:
-            # Compute APR (Effective Annual Cost Rate)
-            effective_rates = calculate_effective_rates(
-                net_disbursed=metrics["net_disbursed_amount"],
-                emi=metrics["emi"],
-                tenure_months=metrics["tenure_months"]
-            )
-            transparency = calculate_transparency_score(metrics, charges, total_pages)
+            if metrics and metrics.get("net_disbursed_amount", 0) > 0 and metrics.get("emi", 0) > 0:
+                effective_rates = calculate_effective_rates(
+                    net_disbursed=metrics["net_disbursed_amount"],
+                    emi=metrics["emi"],
+                    tenure_months=metrics["tenure_months"]
+                )
+                transparency = calculate_transparency_score(metrics, charges, total_pages)
+            else:
+                effective_rates = None
+                transparency = calculate_transparency_score({}, charges, total_pages)
         except Exception as e:
             render_pipeline_status(5, failed_at_step=5)
             st.error(f"Failed to calculate true cost metrics: {str(e)}")
@@ -298,7 +304,8 @@ def run_analysis_pipeline(file_bytes: bytes, file_name: str):
                 basis = c["basis"]
                 
                 explanations[canonical_name] = get_simple_explanation(canonical_name, evidence)
-                math_examples[canonical_name] = generate_math_example(canonical_name, val, unit, basis)
+                if val is not None:
+                    math_examples[canonical_name] = generate_math_example(canonical_name, val, unit, basis)
         except Exception as e:
             render_pipeline_status(6, failed_at_step=6)
             st.error(f"Failed to build transparency results: {str(e)}")
@@ -310,17 +317,20 @@ def run_analysis_pipeline(file_bytes: bytes, file_name: str):
         
         # Determine overall audit status
         has_principal = (principal > 0.0)
-        has_rate = (rate > 0.0)
+        has_rate = (rate is not None and rate >= 0.0)
         has_tenure = (tenure > 0)
         
         if not has_principal and not has_rate and not has_tenure:
             audit_status = "FAILED"
+            data_source_badge = "DATA SOURCE: EXTRACTION FAILED"
         elif not has_principal or not has_rate or not has_tenure:
             audit_status = "PARTIAL"
+            data_source_badge = "DATA SOURCE: CURRENT UPLOADED DOCUMENT (PARTIAL)"
         else:
             audit_status = "VERIFIED"
+            data_source_badge = "DATA SOURCE: CURRENT UPLOADED DOCUMENT"
             
-        # Save results to session state
+        # Reset and save fresh state
         st.session_state.doc_name = file_name
         st.session_state.doc_type = doc_result.get("file_type", "")
         st.session_state.total_pages = total_pages
@@ -333,6 +343,8 @@ def run_analysis_pipeline(file_bytes: bytes, file_name: str):
         st.session_state.explanations = explanations
         st.session_state.math_examples = math_examples
         st.session_state.audit_status = audit_status
+        st.session_state.data_source_badge = data_source_badge
+        st.session_state.debts_list = []  # Clear previous debt inventory
         
         # Success message with quick instructions
         st.balloons()

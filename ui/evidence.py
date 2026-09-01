@@ -44,8 +44,22 @@ def render_evidence_page():
             """,
             unsafe_allow_html=True
         )
+    if "extracted" not in st.session_state or st.session_state.extracted is None:
+        st.markdown(
+            """
+            <div class="premium-card glow-border-amber" style="background: rgba(245, 158, 11, 0.02); padding: 24px; margin-bottom: 25px;">
+                <div style="font-weight: 700; color: #f59e0b; font-size: 16px; margin-bottom: 8px;">⚠️ No Document Analyzed Yet</div>
+                <div style="color: #cbd5e1; font-size: 13px; line-height: 1.5;">
+                    Please go to the <b>Upload & Analyze</b> page and process a loan agreement to view the verification trace.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        return
+
     extracted = st.session_state.extracted
-    charges = st.session_state.charges
+    charges = st.session_state.charges or []
     currency = "₹"
 
     # Compile all records for trace table
@@ -56,25 +70,32 @@ def render_evidence_page():
         if field_name == "other_charges":
             continue
             
-        field_data = getattr(extracted, field_name)
+        field_data = getattr(extracted, field_name, None)
         if field_data:
             val = field_data.value
             page = field_data.page
             evidence = field_data.evidence
-            confidence = field_data.confidence
+            confidence = field_data.confidence or "medium"
+            status = getattr(field_data, "status", None)
+            orig_term = getattr(field_data, "original_term", None) or field_name.replace("_", " ").title()
             
-            # Check status
-            if val is not None and str(val).lower() != 'null':
-                status = "Verified"
-                if confidence == "low":
-                    status = "Needs Review"
+            if not status:
+                if val is not None and str(val).lower() != 'null':
+                    status = "VERIFIED"
+                elif evidence:
+                    status = "MENTIONED-BUT-NOT-SPECIFIED"
+                else:
+                    status = "NOT FOUND"
                     
+            disp_val = f"{val} ({field_data.unit or 'raw'})" if val is not None else ("Mentioned — Value Not Specified" if status == "MENTIONED-BUT-NOT-SPECIFIED" else "Not Found")
+            
+            if status != "NOT FOUND" or field_name in ["loan_amount", "interest_rate", "tenure", "emi"]:
                 records.append({
-                    "Field": field_name.replace("_", " ").title(),
-                    "Extracted Value": f"{val} ({field_data.unit or 'raw'})",
+                    "Field": orig_term,
+                    "Extracted Value": disp_val,
                     "Page": page if page is not None else 1,
                     "Evidence Snippet": evidence or "No verifiable evidence found in the document.",
-                    "Confidence": confidence or "medium",
+                    "Confidence": confidence,
                     "Raw Value": val,
                     "Source": "native_text" if not getattr(st.session_state, "ocr_used", False) else "ocr_fallback",
                     "Status": status
@@ -82,38 +103,35 @@ def render_evidence_page():
                 
     # Add other charges from AI extraction
     for idx, charge in enumerate(extracted.other_charges):
-        if charge.value is not None:
-            status = "Verified"
-            if charge.confidence == "low":
-                status = "Needs Review"
-                
-            records.append({
-                "Field": f"Other Charge: {charge.name}",
-                "Extracted Value": f"{charge.value} ({charge.unit or 'raw'})",
-                "Page": charge.page if charge.page is not None else 1,
-                "Evidence Snippet": charge.evidence or "No verifiable evidence found in the document.",
-                "Confidence": charge.confidence or "medium",
-                "Raw Value": charge.value,
-                "Source": "native_text",
-                "Status": status
-            })
-            
+        status = getattr(charge, "status", "VERIFIED" if charge.value is not None else "MENTIONED-BUT-NOT-SPECIFIED")
+        disp_val = f"{charge.value} ({charge.unit or 'raw'})" if charge.value is not None else "Mentioned — Value Not Specified"
+        records.append({
+            "Field": f"Other Charge: {charge.name}",
+            "Extracted Value": disp_val,
+            "Page": charge.page if charge.page is not None else 1,
+            "Evidence Snippet": charge.evidence or "No verifiable evidence found in the document.",
+            "Confidence": charge.confidence or "medium",
+            "Raw Value": charge.value,
+            "Source": "native_text",
+            "Status": status
+        })
+        
     # Add keyword charges
-    kw_charges = [c for c in charges if c["source"] == "keyword_reference"]
+    kw_charges = [c for c in charges if c.get("source") == "keyword_reference"]
     for c in kw_charges:
         name = c.get("original_name") or c.get("canonical_name").replace("_", " ").title()
         records.append({
             "Field": name,
-            "Extracted Value": "Mentioned, Value Not Specified",
+            "Extracted Value": "Mentioned — Value Not Specified",
             "Page": c.get("page", 1),
             "Evidence Snippet": c.get("evidence") or "No verifiable evidence found in the document.",
             "Confidence": "medium",
             "Raw Value": None,
             "Source": "keyword_reference",
-            "Status": "Keyword Detected"
+            "Status": "MENTIONED-BUT-NOT-SPECIFIED"
         })
         
-    # Append Not Found items for core catalog terms
+    # Append Not Found items for core catalog terms if missing
     catalog_term_names = {
         "processing_fee": "Processing Fee",
         "insurance": "Credit Insurance",
@@ -126,11 +144,7 @@ def render_evidence_page():
     }
     
     for key, disp_name in catalog_term_names.items():
-        already_added = False
-        for r in records:
-            if disp_name.lower() in r["Field"].lower():
-                already_added = True
-                break
+        already_added = any(disp_name.lower() in r["Field"].lower() for r in records)
         if not already_added:
             records.append({
                 "Field": disp_name,
@@ -140,7 +154,7 @@ def render_evidence_page():
                 "Confidence": "-",
                 "Raw Value": None,
                 "Source": "-",
-                "Status": "Not Found"
+                "Status": "NOT FOUND"
             })
 
     if not records:
@@ -228,6 +242,20 @@ def render_evidence_page():
         else:
             status_color = "#ef4444"
         
+        from modules.explanation.explainer import get_simple_explanation, generate_math_example
+        explanation = get_simple_explanation(r['Field'], r["Evidence Snippet"])
+        math_eg = generate_math_example(r['Field'], r.get("Raw Value"), None, None)
+        
+        math_html = ""
+        if math_eg:
+            res_val = math_eg.get('result')
+            res_str = f"₹{res_val:,.2f}" if isinstance(res_val, (int, float)) else str(res_val)
+            math_html = f"""
+            <div style="background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.15); border-radius: 6px; padding: 10px; margin-bottom: 10px; font-size: 12px; color: #cbd5e1;">
+                💡 <b>Math Impact Scenario ({math_eg.get('scenario', 'Calculation')}):</b> {math_eg.get('formula', '')} = <b>{res_str}</b>
+            </div>
+            """
+
         with st.expander(f"🔎 Audit Details: {r['Field']} ({status})"):
             snippet = r["Evidence Snippet"]
             highlighted_snippet = snippet
@@ -240,7 +268,11 @@ def render_evidence_page():
                 <div style="background-color: rgba(0, 0, 0, 0.25); padding: 16px; border-radius: 8px; font-size: 13px; color: #cbd5e1; border: 1px solid rgba(148,163,184,0.1); font-family: monospace; line-height: 1.6; font-style: italic; margin-bottom: 10px;">
                     "{highlighted_snippet}"
                 </div>
-                <div style="display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; padding: 0 4px;">
+                <div style="background: rgba(56, 189, 248, 0.04); border-left: 3px solid #38bdf8; padding: 10px 14px; border-radius: 6px; font-size: 12px; color: #f8fafc; margin-bottom: 10px; line-height: 1.5;">
+                    <b>Plain-English Explainability Rationale:</b> {explanation}
+                </div>
+                {math_html}
+                <div style="display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; padding: 4px 4px 0 4px;">
                     <span>Extraction Method: <b>{r['Source'].replace('_', ' ').title()}</b></span>
                     <span>Confidence Score: <b style="color: {conf_color}; text-transform: uppercase;">{r['Confidence']}</b></span>
                 </div>

@@ -7,9 +7,23 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [pipelineStep, setPipelineStep] = useState(1);
   const [analysisError, setAnalysisError] = useState('');
+  const [showAmortTable, setShowAmortTable] = useState(false);
+  const [strategySubTab, setStrategySubTab] = useState('roadmap');
+  const [compLoans, setCompLoans] = useState([
+    { name: 'Offer A', principal: 200000, interestRate: 15.0, tenure: 24, emi: 9697, pf: 2.0, ins: 3000 },
+    { name: 'Offer B', principal: 200000, interestRate: 14.5, tenure: 24, emi: 9650, pf: 1.5, ins: 0 },
+    { name: 'Offer C', principal: 200000, interestRate: 16.0, tenure: 24, emi: 9792, pf: 0.0, ins: 5000 }
+  ]);
   
   // Backend health status
   const [apiHealth, setApiHealth] = useState({ online: false, provider: '', model: '' });
+  
+  // AI Chatbot state
+  const [chatMessages, setChatMessages] = useState([
+    { role: 'assistant', content: 'Hello! I am your AI Loan Assistant. Ask me any questions about the clauses, terms, or penalties in your uploaded loan agreement.' }
+  ]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
   
   // Analyzed data state (holds metrics, charges, transparency, explanations, rates, etc.)
   const [analysis, setAnalysis] = useState(null);
@@ -34,9 +48,9 @@ export default function App() {
 
   // Payoff Simulator State
   const [simParams, setSimParams] = useState({
-    balance: 100000,
-    rate_annual: 12.0,
-    current_emi: 5000,
+    balance: 0,
+    rate_annual: 0,
+    current_emi: 0,
     extra_monthly: 1000,
     one_time_payment: 0,
     one_time_month: 1
@@ -44,11 +58,7 @@ export default function App() {
   const [simResult, setSimResult] = useState(null);
 
   // Multi-Debt Strategy State
-  const [debts, setDebts] = useState([
-    { id: 1, name: 'Apex Credit Card', balance: 45000, interest_rate: 42.0, emi: 2250 },
-    { id: 2, name: 'Personal Loan', balance: 120000, interest_rate: 14.5, emi: 4130 },
-    { id: 3, name: 'SplitPay BNPL', balance: 15000, interest_rate: 0.0, emi: 5000 }
-  ]);
+  const [debts, setDebts] = useState([]);
   const [strategy, setStrategy] = useState('avalanche');
   const [strategyResult, setStrategyResult] = useState(null);
 
@@ -59,30 +69,47 @@ export default function App() {
 
   // Prepopulate simulator inputs when analysis changes
   useEffect(() => {
-    if (analysis) {
+    if (analysis && analysis.metrics) {
       const outstanding = analysis.charges.find(c => c.canonical_name === 'outstanding_principal')?.value || analysis.metrics.loan_amount;
+      const loanBal = parseFloat(outstanding) || 0;
+      const loanRate = parseFloat(analysis.metrics.interest_rate_annual) || 0;
+      const loanEmi = parseFloat(analysis.metrics.emi) || 0;
+
       setSimParams(prev => ({
         ...prev,
-        balance: parseFloat(outstanding) || 100000,
-        rate_annual: parseFloat(analysis.metrics.interest_rate_annual) || 12.0,
-        current_emi: parseFloat(analysis.metrics.emi) || 5000
+        balance: loanBal,
+        rate_annual: loanRate,
+        current_emi: loanEmi
       }));
 
-      // Prepopulate multi-debt catalog with active loan
+      // Prepopulate multi-debt catalog ONLY with active loan
       const activeLoanName = analysis.doc_name || 'Active Loan';
-      const exists = debts.some(d => d.name === activeLoanName || d.name === 'Active Loan');
-      if (!exists) {
-        setDebts(prev => [
-          ...prev,
-          {
-            id: Date.now(),
-            name: activeLoanName.length > 20 ? activeLoanName.slice(0, 20) + '...' : activeLoanName,
-            balance: parseFloat(outstanding) || 100000,
-            interest_rate: parseFloat(analysis.metrics.interest_rate_annual) || 12.0,
-            emi: parseFloat(analysis.metrics.emi) || 5000
-          }
-        ]);
-      }
+      setDebts([
+        {
+          id: Date.now(),
+          name: activeLoanName.length > 25 ? activeLoanName.slice(0, 25) + '...' : activeLoanName,
+          balance: loanBal,
+          interest_rate: loanRate,
+          emi: loanEmi
+        }
+      ]);
+
+      // Prepopulate Offer A in comparison matrix
+      setCompLoans(prev => {
+        const next = [...prev];
+        const pf_val = analysis.charges.find(c => c.canonical_name === 'processing_fee_percentage')?.value || 0;
+        const ins_val = analysis.charges.find(c => c.canonical_name === 'insurance')?.value || 0;
+        next[0] = {
+          name: 'Active Audited Loan',
+          principal: parseFloat(analysis.metrics.loan_amount) || 0,
+          interestRate: parseFloat(analysis.metrics.interest_rate_annual) || 0,
+          tenure: parseInt(analysis.metrics.tenure_months) || 0,
+          emi: parseFloat(analysis.metrics.emi) || 0,
+          pf: parseFloat(pf_val) || 0,
+          ins: parseFloat(ins_val) || 0
+        };
+        return next;
+      });
     }
   }, [analysis]);
 
@@ -108,11 +135,61 @@ export default function App() {
     }
   };
 
+  const handleSendChatMessage = async () => {
+    if (!chatInput.trim()) return;
+    
+    const userMsg = { role: 'user', content: chatInput };
+    setChatMessages(prev => [...prev, userMsg]);
+    setChatInput('');
+    setChatLoading(true);
+    
+    // We compile the context from active audited loan metrics/charges or raw text if available
+    let contextText = "No active document analyzed. Please guide the user to upload their document.";
+    if (analysis) {
+      contextText = `
+Document Name: ${analysis.doc_name}
+Sanctioned Amount: ₹${analysis.metrics.loan_amount}
+Nominal Interest Rate: ${analysis.metrics.interest_rate_annual}% p.a.
+Tenure: ${analysis.metrics.tenure_months} Months
+Stated EMI: ₹${analysis.metrics.emi}
+True Effective APR: ${analysis.effective_rates?.effective_annual_cost_rate || analysis.metrics.interest_rate_annual}%
+Transparency Score: ${analysis.transparency?.score}/100
+
+Extracted Charges:
+${analysis.charges.map(c => `- ${c.canonical_name}: ${c.value} ${c.unit} (${c.basis}) [Evidence: ${c.evidence}]`).join('\n')}
+
+Regulatory Warnings:
+${analysis.compliance_alerts ? analysis.compliance_alerts.map(a => `- ${a.title}: ${a.description} [Ref: ${a.law_reference}]`).join('\n') : 'None'}
+`;
+    }
+    
+    try {
+      const res = await fetch(`${API_BASE}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMsg.content,
+          context_text: contextText,
+          history: chatMessages.slice(1)
+        })
+      });
+      const data = await res.json();
+      setChatMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
+    } catch (err) {
+      console.error(err);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I failed to reach the AI engine. Please verify the backend is running.' }]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
     setLoading(true);
+    setAnalysis(null);
+    setDebts([]);
     setAnalysisError('');
     
     // Animate Pipeline Stepper
@@ -310,6 +387,121 @@ export default function App() {
     }
   };
 
+  const calculateReducingEmi = (p, annualRate, n) => {
+    if (p <= 0 || annualRate <= 0 || n <= 0) return 0;
+    const r = (annualRate / 12.0) / 100.0;
+    return (p * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+  };
+
+  const solveMonthlyIrrJS = (netDisbursed, emi, tenure) => {
+    if (netDisbursed <= 0 || emi <= 0 || tenure <= 0) return 0;
+    if (emi * tenure <= netDisbursed) return 0.0;
+    let low = 0.0;
+    let high = 2.0;
+    let tolerance = 1e-9;
+    for (let i = 0; i < 100; i++) {
+      let mid = (low + high) / 2.0;
+      let npv = 0.0;
+      for (let t = 1; t <= tenure; t++) {
+        npv += emi / Math.pow(1 + mid, t);
+      }
+      let diff = npv - netDisbursed;
+      if (Math.abs(diff) < tolerance) return mid;
+      if (diff > 0) low = mid;
+      else high = mid;
+    }
+    return low;
+  };
+
+  const calculateEffectiveAprJS = (netDisbursed, emi, tenure) => {
+    const irrMonthly = solveMonthlyIrrJS(netDisbursed, emi, tenure);
+    const effectiveAnnual = (Math.pow(1.0 + irrMonthly, 12.0) - 1.0) * 100.0;
+    return effectiveAnnual;
+  };
+
+  const generateAmortizationSchedule = (principal, annualRate, tenureMonths, emi) => {
+    const schedule = [];
+    let outstanding = principal;
+    const monthlyRate = (annualRate / 100.0) / 12.0;
+    
+    for (let m = 1; m <= tenureMonths; m++) {
+      if (outstanding <= 0) break;
+      const interest = outstanding * monthlyRate;
+      let pPay = emi - interest;
+      let actualEmi = emi;
+      if (pPay > outstanding || m === tenureMonths) {
+        pPay = outstanding;
+        actualEmi = pPay + interest;
+      }
+      
+      const outstandingNew = outstanding - pPay;
+      schedule.push({
+        month: m,
+        emi: actualEmi,
+        interest: interest,
+        principal: pPay,
+        closing_balance: Math.max(0.0, outstandingNew)
+      });
+      outstanding = outstandingNew;
+    }
+    return schedule;
+  };
+
+  const renderDashboardAmortizationTimeline = (schedule, principal) => {
+    if (!schedule || schedule.length === 0) return null;
+    const maxMonths = schedule.length;
+    const maxBalance = principal;
+    
+    const width = 600;
+    const height = 200;
+    const paddingLeft = 50;
+    const paddingRight = 20;
+    const paddingTop = 20;
+    const paddingBottom = 30;
+
+    const getX = (m) => paddingLeft + (m / maxMonths) * (width - paddingLeft - paddingRight);
+    const getY = (bal) => height - paddingBottom - (bal / maxBalance) * (height - paddingTop - paddingBottom);
+
+    const points = schedule.map(d => `${getX(d.month)},${getY(d.closing_balance)}`).join(' ');
+    const fillPoints = `${getX(0)},${getY(maxBalance)} ` + points + ` ${getX(maxMonths)},${getY(0)} ${getX(0)},${getY(0)}`;
+
+    return (
+      <div className="chart-container">
+        <svg viewBox={`0 0 ${width} ${height}`} className="timeline-svg">
+          <defs>
+            <linearGradient id="dashGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.15" />
+              <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.0" />
+            </linearGradient>
+          </defs>
+
+          {/* Grid lines */}
+          <line x1={paddingLeft} y1={getY(maxBalance)} x2={width - paddingRight} y2={getY(maxBalance)} stroke="rgba(255,255,255,0.04)" strokeDasharray="3 3" />
+          <line x1={paddingLeft} y1={getY(maxBalance/2)} x2={width - paddingRight} y2={getY(maxBalance/2)} stroke="rgba(255,255,255,0.04)" strokeDasharray="3 3" />
+          <line x1={paddingLeft} y1={height - paddingBottom} x2={width - paddingRight} y2={height - paddingBottom} stroke="rgba(255,255,255,0.08)" />
+
+          {/* Area Fill */}
+          <polygon points={fillPoints} fill="url(#dashGrad)" />
+
+          {/* Line Plot */}
+          <polyline points={points} fill="none" stroke="#06b6d4" strokeWidth="3" />
+
+          {/* Marker */}
+          <circle cx={getX(maxMonths)} cy={getY(0)} r="5" fill="#06b6d4" />
+
+          {/* Y Axis Labels */}
+          <text x={paddingLeft - 8} y={getY(maxBalance) + 4} fill="#94A3B8" fontSize="9" textAnchor="end">₹{Math.round(maxBalance/1000)}k</text>
+          <text x={paddingLeft - 8} y={getY(maxBalance/2) + 4} fill="#94A3B8" fontSize="9" textAnchor="end">₹{Math.round((maxBalance/2)/1000)}k</text>
+          <text x={paddingLeft - 8} y={height - paddingBottom + 4} fill="#94A3B8" fontSize="9" textAnchor="end">₹0</text>
+
+          {/* X Axis Labels */}
+          <text x={getX(0)} y={height - paddingBottom + 16} fill="#94A3B8" fontSize="9" textAnchor="middle">M0</text>
+          <text x={getX(maxMonths)} y={height - paddingBottom + 16} fill="#06b6d4" fontSize="9" fontWeight="bold" textAnchor="middle">M{maxMonths}</text>
+        </svg>
+      </div>
+    );
+  };
+
   // Rendering standard custom SVG line timeline for payoff simulation
   const renderAmortizationTimeline = () => {
     if (!simResult) return null;
@@ -465,6 +657,9 @@ export default function App() {
           </button>
           <button className={`menu-item ${activeTab === 'report' ? 'active' : ''}`} onClick={() => setActiveTab('report')}>
             <span>📋</span> printable Report
+          </button>
+          <button className={`menu-item ${activeTab === 'chat' ? 'active' : ''}`} onClick={() => setActiveTab('chat')}>
+            <span>💬</span> AI Loan Assistant
           </button>
         </nav>
 
@@ -832,6 +1027,108 @@ export default function App() {
                     })}
                   </div>
                 </div>
+
+                {/* Regulatory Compliance Alerts */}
+                {analysis.compliance_alerts && analysis.compliance_alerts.length > 0 && (
+                  <div style={{ marginTop: 25 }}>
+                    <h3 style={{ fontSize: 18, marginBottom: 15, fontFamily: 'var(--font-heading)' }}>⚖️ Regulatory Compliance Alerts</h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {analysis.compliance_alerts.map((alert, idx) => {
+                        const isCritical = alert.severity === 'CRITICAL';
+                        const isWarning = alert.severity === 'WARNING';
+                        const badgeBg = isCritical ? 'rgba(239, 68, 68, 0.1)' : (isWarning ? 'rgba(245, 158, 11, 0.1)' : 'rgba(99, 102, 241, 0.1)');
+                        const badgeColor = isCritical ? '#ef4444' : (isWarning ? '#f59e0b' : '#6366f1');
+                        const borderLeftColor = badgeColor;
+                        const icon = isCritical ? '🚨' : (isWarning ? '⚠️' : 'ℹ️');
+                        
+                        return (
+                          <div 
+                            key={idx} 
+                            className="premium-card" 
+                            style={{ 
+                              padding: 16, 
+                              borderLeft: `4px solid ${borderLeftColor}`, 
+                              backgroundColor: isCritical ? 'rgba(239, 68, 68, 0.02)' : (isWarning ? 'rgba(245, 158, 11, 0.02)' : 'rgba(99, 102, 241, 0.02)'),
+                              marginBottom: 0
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
+                              <span style={{ fontWeight: 700, color: badgeColor, fontSize: 14, fontFamily: 'var(--font-heading)' }}>
+                                {icon} {alert.title}
+                              </span>
+                              <span style={{ fontSize: 9, background: 'rgba(255,255,255,0.04)', color: '#94a3b8', padding: '2px 8px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>
+                                {alert.law_reference}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 13, color: '#cbd5e1', lineHeight: 1.5, marginBottom: 6 }}>
+                              {alert.description}
+                            </div>
+                            <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>
+                              <b>Impact:</b> {alert.impact}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Loan Amortization Visualizer */}
+                <div style={{ marginTop: 30, marginBottom: 25 }}>
+                  <h3 style={{ fontSize: 18, marginBottom: 15, fontFamily: 'var(--font-heading)' }}>📈 Loan Amortization Schedule</h3>
+                  
+                  {(() => {
+                    const sched = generateAmortizationSchedule(
+                      analysis.metrics.loan_amount,
+                      analysis.metrics.interest_rate_annual,
+                      analysis.metrics.tenure_months,
+                      analysis.metrics.emi
+                    );
+                    
+                    return (
+                      <div>
+                        {renderDashboardAmortizationTimeline(sched, analysis.metrics.loan_amount)}
+                        
+                        <div style={{ marginTop: 15 }}>
+                          <button 
+                            className="btn btn-secondary" 
+                            style={{ padding: '6px 14px', fontSize: 12 }}
+                            onClick={() => setShowAmortTable(!showAmortTable)}
+                          >
+                            {showAmortTable ? '▲ Hide' : '▼ View'} Month-by-Month Repayment Breakdown Table
+                          </button>
+                          
+                          {showAmortTable && (
+                            <div className="premium-card" style={{ marginTop: 12, padding: 10, maxHeight: 300, overflowY: 'auto' }}>
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th>Month</th>
+                                    <th>Scheduled EMI</th>
+                                    <th>Interest Repayment</th>
+                                    <th>Principal Repayment</th>
+                                    <th>Outstanding Balance</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {sched.map((row, rIdx) => (
+                                    <tr key={rIdx}>
+                                      <td style={{ fontWeight: 700 }}>Month {row.month}</td>
+                                      <td>₹{row.emi.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                      <td style={{ color: '#ef4444' }}>₹{row.interest.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                      <td style={{ color: '#10b981' }}>₹{row.principal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                      <td style={{ fontWeight: 600 }}>₹{row.closing_balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
             )}
           </div>
@@ -1096,166 +1393,393 @@ export default function App() {
               </p>
             </header>
 
-            <div className="grid-2">
-              {/* Debt list card */}
-              <div className="premium-card glow-border-indigo" style={{ padding: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-                  <h4 style={{ fontSize: 14, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em' }}>
-                    ⚙️ Your Amortization Catalog
-                  </h4>
-                  <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 11 }} onClick={addManualDebt}>
-                    ➕ Add Debt
-                  </button>
+            {/* Strategy Sub-tabs */}
+            <div style={{ display: 'flex', gap: 15, borderBottom: '1px solid rgba(255,255,255,0.08)', marginBottom: 25 }}>
+              <button 
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: strategySubTab === 'roadmap' ? '#38bdf8' : '#94a3b8',
+                  borderBottom: strategySubTab === 'roadmap' ? '2.5px solid #38bdf8' : 'none',
+                  padding: '10px 16px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  transition: 'all 0.2s'
+                }}
+                onClick={() => setStrategySubTab('roadmap')}
+              >
+                ⚖️ Repayment Priority Roadmap
+              </button>
+              <button 
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: strategySubTab === 'matrix' ? '#38bdf8' : '#94a3b8',
+                  borderBottom: strategySubTab === 'matrix' ? '2.5px solid #38bdf8' : 'none',
+                  padding: '10px 16px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  transition: 'all 0.2s'
+                }}
+                onClick={() => setStrategySubTab('matrix')}
+              >
+                📊 Side-by-Side Loan Comparison Matrix
+              </button>
+            </div>
+
+            {strategySubTab === 'roadmap' ? (
+              <div className="grid-2">
+                {/* Debt list card */}
+                <div className="premium-card glow-border-indigo" style={{ padding: 20 }}>
+                  <div style={{ display: 'flex', justifycontent: 'space-between', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                    <h4 style={{ fontSize: 14, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em' }}>
+                      ⚙️ Your Amortization Catalog
+                    </h4>
+                    <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 11 }} onClick={addManualDebt}>
+                      ➕ Add Debt
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {debts.map((d, index) => (
+                      <div key={d.id} style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: 10, padding: 12 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                          <input 
+                            type="text" 
+                            value={d.name} 
+                            style={{ fontWeight: 700, padding: '4px 8px', width: '70%', background: 'rgba(0,0,0,0.1)', border: 'none' }}
+                            onChange={(e) => {
+                              const newName = e.target.value;
+                              setDebts(prev => prev.map(item => item.id === d.id ? { ...item, name: newName } : item));
+                            }} 
+                          />
+                          <button style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 13 }} onClick={() => removeDebt(d.id)}>
+                            ✕ Delete
+                          </button>
+                        </div>
+
+                        <div className="grid-3" style={{ gap: 10 }}>
+                          <div className="form-group" style={{ marginBottom: 0 }}>
+                            <label style={{ fontSize: 9 }}>Balance (₹)</label>
+                            <input 
+                              type="number" 
+                              style={{ padding: '6px 8px', fontSize: 12 }}
+                              value={d.balance} 
+                              onChange={(e) => updateDebtItem(d.id, 'balance', e.target.value)} 
+                            />
+                          </div>
+                          <div className="form-group" style={{ marginBottom: 0 }}>
+                            <label style={{ fontSize: 9 }}>Interest Rate (%)</label>
+                            <input 
+                              type="number" 
+                              step="0.1"
+                              style={{ padding: '6px 8px', fontSize: 12 }}
+                              value={d.interest_rate} 
+                              onChange={(e) => updateDebtItem(d.id, 'interest_rate', e.target.value)} 
+                            />
+                          </div>
+                          <div className="form-group" style={{ marginBottom: 0 }}>
+                            <label style={{ fontSize: 9 }}>Monthly EMI (₹)</label>
+                            <input 
+                              type="number" 
+                              style={{ padding: '6px 8px', fontSize: 12 }}
+                              value={d.emi} 
+                              onChange={(e) => updateDebtItem(d.id, 'emi', e.target.value)} 
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {debts.map((d, index) => (
-                    <div key={d.id} style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: 10, padding: 12 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                        <input 
-                          type="text" 
-                          value={d.name} 
-                          style={{ fontWeight: 700, padding: '4px 8px', width: '70%', background: 'rgba(0,0,0,0.1)', border: 'none' }}
-                          onChange={(e) => {
-                            const newName = e.target.value;
-                            setDebts(prev => prev.map(item => item.id === d.id ? { ...item, name: newName } : item));
-                          }} 
-                        />
-                        <button style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 13 }} onClick={() => removeDebt(d.id)}>
-                          ✕ Delete
-                        </button>
-                      </div>
+                {/* Priority Strategy results */}
+                <div>
+                  <div className="premium-card glow-border-cyan" style={{ padding: 20, marginBottom: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                      <h4 style={{ fontSize: 12, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em' }}>
+                        ⚖️ Select Paydown Strategy
+                      </h4>
+                      
+                      <select 
+                        style={{ width: 'auto', padding: '6px 10px', fontSize: 12 }}
+                        value={strategy}
+                        onChange={(e) => setStrategy(e.target.value)}
+                      >
+                        <option value="avalanche">Debt Avalanche (Mathematically Optimal)</option>
+                        <option value="snowball">Debt Snowball (Smallest Debt First)</option>
+                        <option value="ai_recommended">AI recommended (Hybrid Cost/Momentum)</option>
+                      </select>
+                    </div>
 
-                      <div className="grid-3" style={{ gap: 10 }}>
-                        <div className="form-group" style={{ marginBottom: 0 }}>
-                          <label style={{ fontSize: 9 }}>Balance (₹)</label>
-                          <input 
-                            type="number" 
-                            style={{ padding: '6px 8px', fontSize: 12 }}
-                            value={d.balance} 
-                            onChange={(e) => updateDebtItem(d.id, 'balance', e.target.value)} 
-                          />
+                    {strategyResult && (
+                      <div>
+                        <h3 style={{ color: '#38bdf8', fontSize: 16, marginBottom: 6 }}>
+                          {strategyResult.explanation.title}
+                        </h3>
+                        <p style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.5, marginBottom: 12 }}>
+                          {strategyResult.explanation.mechanism}
+                        </p>
+                        
+                        <div style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: 8, padding: 10, fontSize: 11.5, color: '#cbd5e1', marginBottom: 10 }}>
+                          <span style={{ color: '#10b981', fontWeight: 700, display: 'block', marginBottom: 2 }}>PROS:</span>
+                          {strategyResult.explanation.pros}
                         </div>
-                        <div className="form-group" style={{ marginBottom: 0 }}>
-                          <label style={{ fontSize: 9 }}>Interest Rate (%)</label>
+
+                        <div style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic' }}>
+                          💡 <b>Recommendation Advice:</b> {strategyResult.explanation.advice}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Priority order list */}
+                  <h4 style={{ fontSize: 13, color: '#ffffff', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                    🎯 Priority Repayment Sequence Order
+                  </h4>
+                  
+                  {strategyResult && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {strategyResult.debts.map((item, index) => {
+                        const glowColor = index === 0 ? '#10b981' : (index === debts.length - 1 ? 'rgba(255,255,255,0.08)' : '#818cf8');
+                        const borderLeftStyle = index === 0 ? '4px solid #10b981' : '4px solid rgba(255,255,255,0.1)';
+                        
+                        return (
+                          <div key={index} className="premium-card" style={{ padding: 12, borderLeft: borderLeftStyle, marginBottom: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                              <span style={{ 
+                                width: 22, 
+                                height: 22, 
+                                borderRadius: '50%', 
+                                backgroundColor: index === 0 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.03)',
+                                color: index === 0 ? '#10b981' : '#94a3b8',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifycontent: 'center',
+                                justifyContent: 'center',
+                                fontWeight: 'bold',
+                                fontSize: 11
+                              }}>
+                                {item.priority_rank}
+                              </span>
+                              <div>
+                                <div style={{ fontWeight: 700, color: '#ffffff', fontSize: 13.5 }}>{item.name}</div>
+                                <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>
+                                  Balance: ₹{item.balance.toLocaleString('en-IN')} &nbsp;|&nbsp; Rate: {item.interest_rate}% p.a.
+                                </div>
+                              </div>
+                            </div>
+
+                            <div style={{ textAlign: 'right' }}>
+                              <span style={{ 
+                                fontSize: 9, 
+                                fontWeight: 800, 
+                                padding: '2px 8px', 
+                                borderRadius: 12, 
+                                backgroundColor: index === 0 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.02)',
+                                color: index === 0 ? '#10b981' : '#94a3b8' 
+                              }}>
+                                {index === 0 ? '🔥 ACTIVE TARGET' : 'QUEUED'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div>
+                {/* Comparison Matrix view */}
+                <h3 style={{ fontSize: 18, marginBottom: 15, fontFamily: 'var(--font-heading)' }}>⚖️ Side-by-Side Loan Offers Comparison</h3>
+                <p style={{ color: '#94a3b8', fontSize: 12.5, marginBottom: 20, lineHeight: 1.5 }}>
+                  Compare different loan parameters (processing fees, nominal rates, insurance) side-by-side. The matrix computes the actual Effective APR drag and total cost of borrowing on the fly.
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18, marginBottom: 25 }}>
+                  {compLoans.map((loan, lIdx) => (
+                    <div key={lIdx} className="premium-card glow-border-indigo" style={{ padding: 20, marginBottom: 0 }}>
+                      <h4 style={{ color: '#38bdf8', fontSize: 15, marginBottom: 15, textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                        {loan.name}
+                      </h4>
+                      
+                      <div className="form-group">
+                        <label>Principal Loan Amount (₹)</label>
+                        <input 
+                          type="number" 
+                          value={loan.principal} 
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setCompLoans(prev => prev.map((item, idx) => idx === lIdx ? { ...item, principal: val, emi: Math.round(calculateReducingEmi(val, item.interestRate, item.tenure)) } : item));
+                          }}
+                        />
+                      </div>
+                      
+                      <div className="grid-2" style={{ gap: 10, marginTop: 8 }}>
+                        <div className="form-group">
+                          <label>Interest Rate (% p.a.)</label>
                           <input 
                             type="number" 
                             step="0.1"
-                            style={{ padding: '6px 8px', fontSize: 12 }}
-                            value={d.interest_rate} 
-                            onChange={(e) => updateDebtItem(d.id, 'interest_rate', e.target.value)} 
+                            value={loan.interestRate} 
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 0;
+                              setCompLoans(prev => prev.map((item, idx) => idx === lIdx ? { ...item, interestRate: val, emi: Math.round(calculateReducingEmi(item.principal, val, item.tenure)) } : item));
+                            }}
                           />
                         </div>
-                        <div className="form-group" style={{ marginBottom: 0 }}>
-                          <label style={{ fontSize: 9 }}>Monthly EMI (₹)</label>
+                        <div className="form-group">
+                          <label>Tenure (Months)</label>
                           <input 
                             type="number" 
-                            style={{ padding: '6px 8px', fontSize: 12 }}
-                            value={d.emi} 
-                            onChange={(e) => updateDebtItem(d.id, 'emi', e.target.value)} 
+                            value={loan.tenure} 
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              setCompLoans(prev => prev.map((item, idx) => idx === lIdx ? { ...item, tenure: val, emi: Math.round(calculateReducingEmi(item.principal, item.interestRate, val)) } : item));
+                            }}
                           />
                         </div>
+                      </div>
+
+                      <div className="grid-2" style={{ gap: 10, marginTop: 8 }}>
+                        <div className="form-group">
+                          <label>Processing Fee (%)</label>
+                          <input 
+                            type="number" 
+                            step="0.1"
+                            value={loan.pf} 
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 0;
+                              setCompLoans(prev => prev.map((item, idx) => idx === lIdx ? { ...item, pf: val } : item));
+                            }}
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label>Insurance Cover (₹)</label>
+                          <input 
+                            type="number" 
+                            value={loan.ins} 
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 0;
+                              setCompLoans(prev => prev.map((item, idx) => idx === lIdx ? { ...item, ins: val } : item));
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="form-group" style={{ marginTop: 8 }}>
+                        <label>Monthly EMI (₹)</label>
+                        <input 
+                          type="number" 
+                          value={loan.emi} 
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setCompLoans(prev => prev.map((item, idx) => idx === lIdx ? { ...item, emi: val } : item));
+                          }}
+                        />
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
 
-              {/* Priority Strategy results */}
-              <div>
-                <div className="premium-card glow-border-cyan" style={{ padding: 20, marginBottom: 20 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-                    <h4 style={{ fontSize: 12, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em' }}>
-                      ⚖️ Select Paydown Strategy
-                    </h4>
-                    
-                    <select 
-                      style={{ width: 'auto', padding: '6px 10px', fontSize: 12 }}
-                      value={strategy}
-                      onChange={(e) => setStrategy(e.target.value)}
-                    >
-                      <option value="avalanche">Debt Avalanche (Mathematically Optimal)</option>
-                      <option value="snowball">Debt Snowball (Smallest Debt First)</option>
-                      <option value="ai_recommended">AI recommended (Hybrid Cost/Momentum)</option>
-                    </select>
-                  </div>
+                {/* Comparison Matrix Table */}
+                <h3 style={{ fontSize: 16, marginBottom: 15, fontFamily: 'var(--font-heading)' }}>📊 Derived Comparison Matrix</h3>
+                <div className="premium-card" style={{ padding: 12, overflowX: 'auto' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Comparison Metric</th>
+                        {compLoans.map((loan, idx) => <th key={idx}>{loan.name}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const calculated = compLoans.map(loan => {
+                          const pfVal = loan.principal * (loan.pf / 100.0);
+                          const gstVal = pfVal * 0.18;
+                          const upfrontLeakage = pfVal + gstVal + loan.ins;
+                          const netDisbursed = loan.principal - upfrontLeakage;
+                          
+                          const totalRepayments = loan.emi * loan.tenure;
+                          const totalInterest = Math.max(0, totalRepayments - loan.principal);
+                          const totalBorrowingCost = totalInterest + upfrontLeakage;
+                          
+                          const apr = calculateEffectiveAprJS(netDisbursed, loan.emi, loan.tenure);
+                          
+                          return {
+                            principal: loan.principal,
+                            statedRate: loan.interestRate,
+                            tenure: loan.tenure,
+                            emi: loan.emi,
+                            pfVal,
+                            gstVal,
+                            netDisbursed,
+                            totalInterest,
+                            totalBorrowingCost,
+                            apr
+                          };
+                        });
 
-                  {strategyResult && (
-                    <div>
-                      <h3 style={{ color: '#38bdf8', fontSize: 16, marginBottom: 6 }}>
-                        {strategyResult.explanation.title}
-                      </h3>
-                      <p style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.5, marginBottom: 12 }}>
-                        {strategyResult.explanation.mechanism}
-                      </p>
-                      
-                      <div style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: 8, padding: 10, fontSize: 11.5, color: '#cbd5e1', marginBottom: 10 }}>
-                        <span style={{ color: '#10b981', fontWeight: 700, display: 'block', marginBottom: 2 }}>PROS:</span>
-                        {strategyResult.explanation.pros}
-                      </div>
-
-                      <div style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic' }}>
-                        💡 <b>Recommendation Advice:</b> {strategyResult.explanation.advice}
-                      </div>
-                    </div>
-                  )}
+                        return (
+                          <>
+                            <tr>
+                              <td style={{ fontWeight: 700 }}>Sanctioned Principal</td>
+                              {calculated.map((c, idx) => <td key={idx}>₹{c.principal.toLocaleString('en-IN')}</td>)}
+                            </tr>
+                            <tr>
+                              <td style={{ fontWeight: 700 }}>Stated Nominal Rate</td>
+                              {calculated.map((c, idx) => <td key={idx}>{c.statedRate}% p.a.</td>)}
+                            </tr>
+                            <tr>
+                              <td style={{ fontWeight: 700 }}>Contract Tenure</td>
+                              {calculated.map((c, idx) => <td key={idx}>{c.tenure} Months</td>)}
+                            </tr>
+                            <tr>
+                              <td style={{ fontWeight: 700 }}>Monthly EMI</td>
+                              {calculated.map((c, idx) => <td key={idx}>₹{c.emi.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>)}
+                            </tr>
+                            <tr>
+                              <td style={{ fontWeight: 700, color: '#38bdf8' }}>Net Disbursed Amount</td>
+                              {calculated.map((c, idx) => <td key={idx} style={{ color: '#38bdf8', fontWeight: 'bold' }}>₹{c.netDisbursed.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>)}
+                            </tr>
+                            <tr>
+                              <td style={{ fontWeight: 700 }}>Upfront Processing Fee</td>
+                              {calculated.map((c, idx) => <td key={idx}>₹{c.pfVal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td>)}
+                            </tr>
+                            <tr>
+                              <td style={{ fontWeight: 700 }}>GST / Tax on Fees</td>
+                              {calculated.map((c, idx) => <td key={idx}>₹{c.gstVal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td>)}
+                            </tr>
+                            <tr>
+                              <td style={{ fontWeight: 700, color: '#ef4444' }}>Total Interest Payable</td>
+                              {calculated.map((c, idx) => <td key={idx} style={{ color: '#ef4444' }}>₹{c.totalInterest.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>)}
+                            </tr>
+                            <tr>
+                              <td style={{ fontWeight: 700, color: '#f59e0b' }}>Total Borrowing Cost</td>
+                              {calculated.map((c, idx) => <td key={idx} style={{ color: '#f59e0b', fontWeight: 'bold' }}>₹{c.totalBorrowingCost.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>)}
+                            </tr>
+                            <tr>
+                              <td style={{ fontWeight: 700, color: '#10b981' }}>Effective Annual APR</td>
+                              {calculated.map((c, idx) => <td key={idx} style={{ color: '#10b981', fontWeight: 'bold', fontSize: 14 }}>{c.apr.toFixed(2)}% p.a.</td>)}
+                            </tr>
+                            <tr>
+                              <td style={{ fontWeight: 700 }}>APR Markup Over Stated</td>
+                              {calculated.map((c, idx) => {
+                                const diff = c.apr - c.statedRate;
+                                return <td key={idx} style={{ color: diff > 2 ? '#ef4444' : '#cbd5e1' }}>+{diff.toFixed(2)}%</td>;
+                              })}
+                            </tr>
+                          </>
+                        );
+                      })()}
+                    </tbody>
+                  </table>
                 </div>
-
-                {/* Priority order list */}
-                <h4 style={{ fontSize: 13, color: '#ffffff', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-                  🎯 Priority Repayment Sequence Order
-                </h4>
-                
-                {strategyResult && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {strategyResult.debts.map((item, index) => {
-                      const glowColor = index === 0 ? '#10b981' : (index === debts.length - 1 ? 'rgba(255,255,255,0.08)' : '#818cf8');
-                      const borderLeftStyle = index === 0 ? '4px solid #10b981' : '4px solid rgba(255,255,255,0.1)';
-                      
-                      return (
-                        <div key={index} className="premium-card" style={{ padding: 12, borderLeft: borderLeftStyle, marginBottom: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <span style={{ 
-                              width: 22, 
-                              height: 22, 
-                              borderRadius: '50%', 
-                              backgroundColor: index === 0 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.03)',
-                              color: index === 0 ? '#10b981' : '#94a3b8',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontWeight: 'bold',
-                              fontSize: 11
-                            }}>
-                              {item.priority_rank}
-                            </span>
-                            <div>
-                              <div style={{ fontWeight: 700, color: '#ffffff', fontSize: 13.5 }}>{item.name}</div>
-                              <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>
-                                Balance: ₹{item.balance.toLocaleString('en-IN')} &nbsp;|&nbsp; Rate: {item.interest_rate}% p.a.
-                              </div>
-                            </div>
-                          </div>
-
-                          <div style={{ textAlign: 'right' }}>
-                            <span style={{ 
-                              fontSize: 9, 
-                              fontWeight: 800, 
-                              padding: '2px 8px', 
-                              borderRadius: 12, 
-                              backgroundColor: index === 0 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.02)',
-                              color: index === 0 ? '#10b981' : '#94a3b8' 
-                            }}>
-                              {index === 0 ? '🔥 ACTIVE TARGET' : 'QUEUED'}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -1420,6 +1944,76 @@ export default function App() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* TAB 8: AI LOAN ASSISTANT CHATBOT */}
+        {activeTab === 'chat' && (
+          <div>
+            <header className="page-header">
+              <h1 className="page-title">💬 Interactive AI Loan Assistant</h1>
+              <p className="page-description">
+                Ask specific questions about your agreement clauses, penalties, lock-in terms, or transparency scoring.
+              </p>
+            </header>
+
+            <div className="premium-card glow-border-cyan" style={{ padding: 20, display: 'flex', flexDirection: 'column', height: '65vh', marginBottom: 0 }}>
+              {/* Message History list */}
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 15, paddingRight: 5 }}>
+                {chatMessages.map((msg, index) => {
+                  const isUser = msg.role === 'user';
+                  return (
+                    <div 
+                      key={index} 
+                      style={{ 
+                        alignSelf: isUser ? 'flex-end' : 'flex-start',
+                        maxWidth: '75%',
+                        backgroundColor: isUser ? '#6366f1' : 'rgba(255,255,255,0.03)',
+                        border: isUser ? 'none' : '1px solid rgba(255,255,255,0.05)',
+                        borderRadius: 12,
+                        padding: '12px 16px',
+                        fontSize: 13.5,
+                        color: '#ffffff',
+                        lineHeight: 1.5
+                      }}
+                    >
+                      <div style={{ fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', color: isUser ? '#c7d2fe' : '#38bdf8', marginBottom: 4 }}>
+                        {isUser ? 'You' : 'AI Assistant'}
+                      </div>
+                      <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                    </div>
+                  );
+                })}
+                {chatLoading && (
+                  <div style={{ alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.01)', borderRadius: 12, padding: '12px 16px', fontSize: 13, color: '#94a3b8' }}>
+                    🤖 <i>AI is scanning your agreement terms...</i>
+                  </div>
+                )}
+              </div>
+
+              {/* Chat inputs bar */}
+              <div style={{ display: 'flex', gap: 10 }}>
+                <input 
+                  type="text" 
+                  placeholder={analysis ? "Ask about late fees, prepayment limits, hidden costs..." : "Please upload a document to unlock contract-specific Q&A"}
+                  disabled={chatLoading}
+                  value={chatInput} 
+                  onChange={(e) => setChatInput(e.target.value)} 
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSendChatMessage();
+                  }}
+                  style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.2)', color: '#ffffff' }}
+                />
+                <button 
+                  className="btn btn-primary" 
+                  disabled={chatLoading || !chatInput.trim()}
+                  onClick={handleSendChatMessage}
+                  style={{ padding: '10px 22px' }}
+                >
+                  Send
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>

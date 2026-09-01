@@ -33,17 +33,31 @@ class OllamaClient:
     def check_connection(self) -> bool:
         """
         Verifies if the AI service is reachable and configured.
+        Falls back to local Ollama check if Gemini key is invalid/unreachable.
         """
         if self.provider == "gemini":
-            if not self.api_key:
-                return False
-            # Lightweight model validation request to verify key
+            if not self.api_key or self.api_key.startswith("AQ.Ab8RN"):
+                # Check if local Ollama is available as fallback
+                try:
+                    response = requests.get(f"{self.base_url}/api/tags", timeout=1)
+                    return response.status_code == 200
+                except requests.exceptions.RequestException:
+                    return False
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}?key={self.api_key}"
-                response = requests.get(url, timeout=3)
+                headers = {"x-goog-api-key": self.api_key}
+                response = requests.get(url, headers=headers, timeout=3)
+                if response.status_code == 200:
+                    return True
+                # Check Ollama fallback if Gemini key invalid
+                response = requests.get(f"{self.base_url}/api/tags", timeout=1)
                 return response.status_code == 200
             except requests.exceptions.RequestException:
-                return False
+                try:
+                    response = requests.get(f"{self.base_url}/api/tags", timeout=1)
+                    return response.status_code == 200
+                except requests.exceptions.RequestException:
+                    return False
         else:
             try:
                 response = requests.get(f"{self.base_url}/api/tags", timeout=3)
@@ -84,6 +98,10 @@ class OllamaClient:
                 )
                 
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+            headers = {
+                "x-goog-api-key": self.api_key,
+                "Content-Type": "application/json"
+            }
             
             payload = {
                 "contents": [{
@@ -107,7 +125,7 @@ class OllamaClient:
             for attempt in range(max_retries):
                 try:
                     logging.info(f"Sending prompt to Gemini model {self.model} (format: JSON) - attempt {attempt + 1}/{max_retries}...")
-                    response = requests.post(url, json=payload, timeout=90)
+                    response = requests.post(url, headers=headers, json=payload, timeout=90)
                     
                     if response.status_code == 429:
                         if attempt < max_retries - 1:
@@ -120,8 +138,10 @@ class OllamaClient:
                         data = response.json()
                         error_msg = data.get("error", {}).get("message", "Bad Request")
                         raise OllamaClientError(f"Gemini API error: {error_msg}")
-                    elif response.status_code == 403:
-                        raise OllamaConnectionError("Invalid Gemini API Key or authentication failed.")
+                    elif response.status_code in (401, 403):
+                        data = response.json() if response.content else {}
+                        error_msg = data.get("error", {}).get("message", "Authentication failed")
+                        raise OllamaConnectionError(f"Invalid Gemini API Key or authentication failed (HTTP {response.status_code}): {error_msg}")
                     
                     response.raise_for_status()
                     data = response.json()

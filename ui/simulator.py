@@ -62,20 +62,18 @@ def render_simulator_page():
                 unsafe_allow_html=True
             )
     else:
-        default_bal = 100000.0
-        default_rate = 12.0
-        default_emi = 5000.0
         st.markdown(
             """
-            <div style="background-color: rgba(245, 158, 11, 0.1); border: 1px solid #F59E0B; padding: 8px 16px; border-radius: 8px; font-weight: 700; color: #F59E0B; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; display: inline-block; margin-bottom: 20px;">
-                ⚠️ DEMO DATA — NOT FROM YOUR DOCUMENT
-            </div>
-            <div class="premium-card glow-border-amber" style="padding: 12px 18px; background: rgba(245, 158, 11, 0.02); font-size: 12px; color: #cbd5e1; margin-bottom: 20px;">
-                Demo Mode — No analyzed document. Using standard mock defaults. You can adjust the parameters below manually.
+            <div class="premium-card glow-border-rose" style="background: rgba(239, 68, 68, 0.03); padding: 24px; margin-bottom: 20px;">
+                <div style="font-weight: 700; color: #EF4444; font-size: 16px; margin-bottom: 8px;">❌ Unable to run simulation — active loan data unavailable.</div>
+                <div style="color: #cbd5e1; font-size: 13px; line-height: 1.5;">
+                    Calculation unavailable — required contract information is missing. Please upload a valid loan agreement on the <b>Upload & Analyze</b> page to run payoff acceleration simulations.
+                </div>
             </div>
             """,
             unsafe_allow_html=True
         )
+        return
 
     currency = "₹"
 

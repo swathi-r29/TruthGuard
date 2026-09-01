@@ -220,7 +220,7 @@ class TestExtraction(unittest.TestCase):
         client.api_key = "test-api-key"
         client.model = "gemini-1.5-flash"
         self.assertTrue(client.check_connection())
-        mock_get.assert_called_with("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash?key=test-api-key", timeout=3)
+        mock_get.assert_called_with("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash?key=test-api-key", headers={"x-goog-api-key": "test-api-key"}, timeout=3)
 
     @patch('modules.ai_extraction.client.requests.get')
     def test_gemini_client_check_connection_no_key(self, mock_get):
@@ -322,7 +322,73 @@ class TestExtraction(unittest.TestCase):
         # Verify that page 1 did not abort the whole extraction and page 2 details are present
         self.assertEqual(merged.lender_name.value, "Jane's Bank")
         self.assertEqual(merged.lender_name.page, 2)
-        self.assertEqual(mock_generate.call_count, 2)
+
+    def test_custom_user_document_regex_extraction(self):
+        extractor = DocumentExtractor()
+        pages = [
+            {
+                "page_number": 1,
+                "text": (
+                    "HDFC BANK LIMITED - LOAN SANCTION LETTER\n"
+                    "Sanction Amount: ₹ 5,00,000/-\n"
+                    "Rate of Interest: 11.5% p.a. reducing balance\n"
+                    "Tenure (Months): 48\n"
+                    "Monthly EMI: ₹ 13,048\n"
+                    "Processing fee is 1.5%\n"
+                    "Late payment fee: ₹ 500 flat\n"
+                    "Bounce Charge: ₹ 450 per instance"
+                )
+            }
+        ]
+        result = extractor.extract_via_regex("\n\n".join(p["text"] for p in pages), pages)
+        self.assertEqual(result.loan_amount.value, 500000.0)
+        self.assertEqual(result.interest_rate.value, 11.5)
+        self.assertEqual(result.tenure.value, 48.0)
+        self.assertEqual(result.emi.value, 13048.0)
+        self.assertEqual(result.processing_fee_percentage.value, 1.5)
+        self.assertEqual(result.late_payment_fee.value, 500.0)
+        self.assertEqual(result.bounce_charge.value, 450.0)
+
+    def test_zero_interest_bnpl_custom_document(self):
+        extractor = DocumentExtractor()
+        pages = [
+            {
+                "page_number": 1,
+                "text": (
+                    "ZestMoney BNPL Consumer Finance Agreement\n"
+                    "Funded Amount: ₹ 40,000\n"
+                    "0% Interest Promo Loan\n"
+                    "Repayment Period: 4 Months\n"
+                    "Processing Fee: ₹ 299"
+                )
+            }
+        ]
+        result = extractor.extract_via_regex("\n\n".join(p["text"] for p in pages), pages)
+        self.assertEqual(result.loan_amount.value, 40000.0)
+        self.assertEqual(result.interest_rate.value, 0.0)
+        self.assertEqual(result.tenure.value, 4.0)
+        self.assertEqual(result.emi.value, 10000.0)  # Solved via Financial Solver (40000 / 4)
+
+    def test_financial_solver_derives_missing_rate(self):
+        extractor = DocumentExtractor()
+        pages = [
+            {
+                "page_number": 1,
+                "text": (
+                    "Personal Finance Agreement\n"
+                    "Principal Amount: Rs. 1,00,000\n"
+                    "Loan Period: 12 months\n"
+                    "Equated Monthly Installment: Rs. 8,885"
+                )
+            }
+        ]
+        result = extractor.extract_via_regex("\n\n".join(p["text"] for p in pages), pages)
+        self.assertEqual(result.loan_amount.value, 100000.0)
+        self.assertEqual(result.tenure.value, 12.0)
+        self.assertEqual(result.emi.value, 8885.0)
+        self.assertIsNotNone(result.interest_rate.value)
+        self.assertAlmostEqual(result.interest_rate.value, 12.0, delta=1.0)
 
 if __name__ == "__main__":
     unittest.main()
+

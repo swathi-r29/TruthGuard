@@ -12,6 +12,21 @@ def generate_markdown_report(
     """
     currency = "₹"
     
+    metrics = metrics or {}
+    transparency = transparency or {}
+    charges = charges or []
+    
+    p_val = metrics.get('loan_amount', 0.0) or 0.0
+    r_val = metrics.get('interest_rate_annual', 0.0) or 0.0
+    t_val = metrics.get('tenure_months', 0) or 0
+    e_val = metrics.get('emi', 0.0) or 0.0
+    u_val = metrics.get('upfront_fees', 0.0) or 0.0
+    tx_val = metrics.get('taxes_on_fees', 0.0) or 0.0
+    net_val = metrics.get('net_disbursed_amount', 0.0) or 0.0
+    rep_val = metrics.get('total_scheduled_repayment', 0.0) or 0.0
+    int_val = metrics.get('total_interest', 0.0) or 0.0
+    cost_val = metrics.get('scheduled_total_cost', 0.0) or 0.0
+    
     report = []
     report.append("# DEBT DETOX REPORT")
     report.append("### Know what your debt REALLY costs.")
@@ -22,27 +37,28 @@ def generate_markdown_report(
     # Financial Table
     report.append(f"| Metric | Value | Description |")
     report.append(f"| :--- | :--- | :--- |")
-    report.append(f"| **Loan Amount (Principal)** | {currency}{metrics['loan_amount']:,.2f} | The amount you borrowed |")
-    report.append(f"| **Interest Rate** | {metrics['interest_rate_annual']}% | Annual interest rate |")
-    report.append(f"| **Tenure** | {metrics['tenure_months']} months | Total loan duration |")
-    report.append(f"| **Monthly EMI** | {currency}{metrics['emi']:,.2f} | Scheduled monthly payment |")
-    report.append(f"| **Upfront Fees** | {currency}{metrics['upfront_fees']:,.2f} | Fees deducted before payout |")
-    report.append(f"| **Taxes on Fees** | {currency}{metrics['taxes_on_fees']:,.2f} | GST/taxes on upfront fees |")
-    report.append(f"| **Amount Actually Received** | **{currency}{metrics['net_disbursed_amount']:,.2f}** | What you received after fees |")
-    report.append(f"| **Total Scheduled Repayments** | {currency}{metrics['total_scheduled_repayment']:,.2f} | Sum of all scheduled payments |")
-    report.append(f"| **Total Interest Payable** | {currency}{metrics['total_interest']:,.2f} | Cost of credit |")
-    report.append(f"| **Scheduled Total Cost** | **{currency}{metrics['scheduled_total_cost']:,.2f}** | Total interest + upfront costs |")
+    report.append(f"| **Loan Amount (Principal)** | {currency}{p_val:,.2f} | The amount you borrowed |")
+    report.append(f"| **Interest Rate** | {r_val}% | Annual interest rate |")
+    report.append(f"| **Tenure** | {t_val} months | Total loan duration |")
+    report.append(f"| **Monthly EMI** | {currency}{e_val:,.2f} | Scheduled monthly payment |")
+    report.append(f"| **Upfront Fees** | {currency}{u_val:,.2f} | Fees deducted before payout |")
+    report.append(f"| **Taxes on Fees** | {currency}{tx_val:,.2f} | GST/taxes on upfront fees |")
+    report.append(f"| **Amount Actually Received** | **{currency}{net_val:,.2f}** | What you received after fees |")
+    report.append(f"| **Total Scheduled Repayments** | {currency}{rep_val:,.2f} | Sum of all scheduled payments |")
+    report.append(f"| **Total Interest Payable** | {currency}{int_val:,.2f} | Cost of credit |")
+    report.append(f"| **Scheduled Total Cost** | **{currency}{cost_val:,.2f}** | Total interest + upfront costs |")
     
     # Transparency Score
-    report.append(f"\n## 2. Debt Detox Transparency Score: {transparency['score']}/100")
+    score_val = transparency.get('score', 0)
+    tb = transparency.get("breakdown", {}) if isinstance(transparency.get("breakdown"), dict) else {}
+    report.append(f"\n## 2. Debt Detox Transparency Score: {score_val}/100")
     report.append("A custom index assessing the consumer-friendliness of your loan terms:")
-    tb = transparency["breakdown"]
-    report.append(f"- **Information Completeness**: {tb['information_completeness']}/15")
-    report.append(f"- **Prepayment Conditions**: {tb['prepayment_conditions']}/15")
-    report.append(f"- **Penalty Exposure**: {tb['penalty_exposure']}/15")
-    report.append(f"- **Fee Clarity**: {tb['fee_clarity']}/20")
-    report.append(f"- **Contract Complexity**: {tb['contract_complexity']}/15")
-    report.append(f"- **Additional Charges Score**: {tb['additional_charges']}/20")
+    report.append(f"- **Information Completeness**: {tb.get('information_completeness', 0)}/15")
+    report.append(f"- **Prepayment Conditions**: {tb.get('prepayment_conditions', 0)}/15")
+    report.append(f"- **Penalty Exposure**: {tb.get('penalty_exposure', 0)}/15")
+    report.append(f"- **Fee Clarity**: {tb.get('fee_clarity', 0)}/20")
+    report.append(f"- **Contract Complexity**: {tb.get('contract_complexity', 0)}/15")
+    report.append(f"- **Additional Charges Score**: {tb.get('additional_charges', 0)}/20")
     
     # Charges Breakdown
     report.append("\n## 3. Detected Charges List")
@@ -58,8 +74,10 @@ def generate_markdown_report(
         if val is not None:
             if unit == "percent":
                 val_str = f"{val}%"
-            else:
+            elif isinstance(val, (int, float)):
                 val_str = f"{currency}{val:,.2f}"
+            else:
+                val_str = str(val)
                 
         classification = c.get("classification", "OTHER")
         evidence = c.get("evidence", "").replace("\n", " ").strip()

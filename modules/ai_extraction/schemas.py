@@ -1,6 +1,12 @@
 from typing import Optional, List, Union
 from pydantic import BaseModel, Field
 
+# Explicit Term Extraction Status Constants
+STATUS_VERIFIED = "VERIFIED"
+STATUS_MENTIONED_UNSPECIFIED = "MENTIONED-BUT-NOT-SPECIFIED"
+STATUS_NOT_FOUND = "NOT FOUND"
+STATUS_NOT_APPLICABLE = "NOT APPLICABLE"
+
 class ExtractedField(BaseModel):
     value: Optional[Union[float, str]] = Field(
         default=None, 
@@ -30,6 +36,26 @@ class ExtractedField(BaseModel):
         default=None,
         description="Additional surrounding context or verbatim terms if different from evidence."
     )
+    original_term: Optional[str] = Field(
+        default=None,
+        description="The exact phrase/label as written in the original document."
+    )
+    normalized_category: Optional[str] = Field(
+        default=None,
+        description="The standardized category key (e.g. loan_amount, processing_fee)."
+    )
+    condition: Optional[str] = Field(
+        default=None,
+        description="Any specific condition or rule associated with this term."
+    )
+    frequency: Optional[str] = Field(
+        default=None,
+        description="Charge or payment frequency (e.g. one_time, monthly, annual)."
+    )
+    status: str = Field(
+        default=STATUS_NOT_FOUND,
+        description="Extraction status: VERIFIED, MENTIONED-BUT-NOT-SPECIFIED, NOT FOUND, NOT APPLICABLE."
+    )
 
 class OtherChargeField(BaseModel):
     name: str = Field(description="The name of the charge as written in the document.")
@@ -39,6 +65,8 @@ class OtherChargeField(BaseModel):
     page: Optional[int] = Field(default=None, description="The page number.")
     evidence: Optional[str] = Field(default=None, description="Verbatim clause.")
     confidence: Optional[str] = Field(default=None, description="Confidence rating.")
+    original_term: Optional[str] = Field(default=None, description="Original phrasing.")
+    status: str = Field(default=STATUS_VERIFIED, description="Status.")
 
 class LoanExtractionResult(BaseModel):
     document_type: ExtractedField = Field(
