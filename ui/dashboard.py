@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import textwrap
+from modules.active_loan import get_active_loan
 
 def generate_amortization_schedule(principal: float, annual_rate: float, tenure: float, emi: float):
     schedule = []
@@ -43,8 +45,11 @@ def render_dashboard_page():
         unsafe_allow_html=True
     )
     
+    # Retrieve single source of truth active_loan
+    active_loan = get_active_loan(st.session_state)
+
     # Check if document has been uploaded and analyzed
-    if "metrics" not in st.session_state or st.session_state.metrics is None:
+    if not active_loan or not active_loan.get("metrics"):
         st.markdown(
             """
             <div class="premium-card glow-border-amber" style="background: rgba(245, 158, 11, 0.03);">
@@ -56,17 +61,90 @@ def render_dashboard_page():
         )
         return
 
-    metrics = st.session_state.metrics or {}
-    effective_rates = st.session_state.get("effective_rates") or {}
-    transparency = st.session_state.get("transparency") or {}
-    doc_name = st.session_state.doc_name
-    doc_type = st.session_state.doc_type
-    total_pages = st.session_state.total_pages
-    ocr_used = st.session_state.ocr_used
+    metrics = active_loan.get("metrics", {})
+    effective_rates = active_loan.get("effective_rates", {})
+    transparency = active_loan.get("transparency", {})
+    doc_name = active_loan.get("doc_name", "Document")
+    doc_type = active_loan.get("doc_type", "pdf")
+    total_pages = active_loan.get("total_pages", 1)
+    ocr_used = active_loan.get("ocr_used", False)
+    charges = active_loan.get("charges", [])
     
     currency = "₹"
-    
-    audit_status = st.session_state.get("audit_status", "FAILED")
+    audit_status = active_loan.get("audit_status", "VERIFIED")
+
+    # --- TRUTH VS MARKETING VISUAL DELTA COMPONENT ---
+    principal = metrics.get("loan_amount", 0.0)
+    stated_rate = metrics.get("interest_rate_annual", 0.0)
+    real_apr = metrics.get("real_apr", 0.0)
+    upfront_fees = metrics.get("upfront_fees", 0.0)
+    net_disbursed = metrics.get("net_disbursed_amount", 0.0)
+    total_scheduled = metrics.get("total_scheduled_cost", 0.0)
+    multiplier = (total_scheduled / principal) if principal > 0 else 1.0
+    apr_markup = real_apr - stated_rate
+
+    # Check prepayment / foreclosure charges dynamically
+    foreclosure_charge = [c for c in charges if "foreclosure" in c.get("canonical_name", "") or "prepayment" in c.get("canonical_name", "")]
+    bounce_charge = [c for c in charges if "bounce" in c.get("canonical_name", "") or "late" in c.get("canonical_name", "")]
+
+    penalty_badge = "No early payoff penalty"
+    if foreclosure_charge:
+        f_val = foreclosure_charge[0].get("value")
+        penalty_badge = f"⚠️ {f_val}% Foreclosure Fee Lock-in"
+
+    st.markdown(
+        """<div style="background: linear-gradient(135deg, #0F1E33 0%, #13253D 100%); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.3);">
+<div style="font-size: 11px; font-weight: 800; color: #38bdf8; letter-spacing: 0.08em; text-transform: uppercase;">VERIFIED AUDIT COMPARISON</div>
+<div style="font-size: 20px; font-weight: 800; color: #ffffff; font-family: 'Space Grotesk', sans-serif; margin-top: 2px;">🥊 Stated Terms vs. Debt Detox Real Costs</div>
+</div>""",
+        unsafe_allow_html=True
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        st.markdown(
+            f"""<div style="background: #0F1E33; border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 12px; padding: 16px; min-height: 130px;">
+<div style="color: #94a3b8; font-size: 11px; font-weight: 700; text-transform: uppercase;">STATED VS REAL INTEREST</div>
+<div style="font-size: 13px; color: #94a3b8; text-decoration: line-through; margin-top: 6px;">{stated_rate:.1f}% Bank Rate</div>
+<div style="font-size: 22px; font-weight: 800; color: #38bdf8; margin-top: 2px;">{real_apr:.1f}% APR</div>
+<div style="margin-top: 8px; font-size: 11px; font-weight: 700; color: {'#EF4444' if apr_markup > 0 else '#10B981'}; background: rgba(239, 68, 68, 0.12); padding: 4px 8px; border-radius: 6px; display: inline-block;">+{apr_markup:.2f}% Hidden Markup</div>
+</div>""",
+            unsafe_allow_html=True
+        )
+
+    with c2:
+        st.markdown(
+            f"""<div style="background: #0F1E33; border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 12px; padding: 16px; min-height: 130px;">
+<div style="color: #94a3b8; font-size: 11px; font-weight: 700; text-transform: uppercase;">SANCTIONED VS DISBURSED</div>
+<div style="font-size: 13px; color: #94a3b8; text-decoration: line-through; margin-top: 6px;">{currency}{principal:,.0f} Principal</div>
+<div style="font-size: 22px; font-weight: 800; color: #10B981; margin-top: 2px;">{currency}{net_disbursed:,.0f}</div>
+<div style="margin-top: 8px; font-size: 11px; font-weight: 700; color: #EF4444; background: rgba(239, 68, 68, 0.12); padding: 4px 8px; border-radius: 6px; display: inline-block;">-{currency}{upfront_fees:,.2f} Upfront Fees</div>
+</div>""",
+            unsafe_allow_html=True
+        )
+
+    with c3:
+        st.markdown(
+            f"""<div style="background: #0F1E33; border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 12px; padding: 16px; min-height: 130px;">
+<div style="color: #94a3b8; font-size: 11px; font-weight: 700; text-transform: uppercase;">TOTAL DEBT SERVICE</div>
+<div style="font-size: 22px; font-weight: 800; color: #F59E0B; margin-top: 14px;">{currency}{total_scheduled:,.0f}</div>
+<div style="margin-top: 8px; font-size: 11px; font-weight: 700; color: #F59E0B; background: rgba(245, 158, 11, 0.12); padding: 4px 8px; border-radius: 6px; display: inline-block;">{multiplier:.2f}x Debt Multiplier</div>
+</div>""",
+            unsafe_allow_html=True
+        )
+
+    with c4:
+        st.markdown(
+            f"""<div style="background: #0F1E33; border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 12px; padding: 16px; min-height: 130px;">
+<div style="color: #94a3b8; font-size: 11px; font-weight: 700; text-transform: uppercase;">FINE PRINT CONSTRAINTS</div>
+<div style="font-size: 12px; font-weight: 700; color: #cbd5e1; margin-top: 10px;">{penalty_badge}</div>
+<div style="margin-top: 8px; font-size: 11px; color: #94a3b8;">Bounce Charge: <b style="color: #EF4444;">{f'₹{bounce_charge[0].get("value")}' if bounce_charge else 'None'}</b></div>
+</div>""",
+            unsafe_allow_html=True
+        )
+
+    st.write("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
     
     if audit_status == "FAILED":
         st.markdown(
@@ -520,16 +598,10 @@ def render_dashboard_page():
         verdict = "High Risk / Predatory Details"
         verdict_desc = "This document exposes the borrower to high penalty structures, lock-in periods, or missing fee details. Proceed with caution."
         
-    col_score, col_breakdown = st.columns([1, 2])
+    col_score, col_breakdown = st.columns([1, 1.4])
     
     with col_score:
-        st.markdown(
-            f"""
-            <div class="premium-card" style="text-align: center; padding: 25px; min-height: 380px; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(15,23,42,0.4);">
-                <span style="font-size: 12px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Transparency Score</span>
-            """,
-            unsafe_allow_html=True
-        )
+        st.markdown("<div style='font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; text-align: center; margin-bottom: 5px;'>Transparency Score</div>", unsafe_allow_html=True)
         
         # Build Gauge Chart
         fig = go.Figure(go.Indicator(
@@ -555,59 +627,50 @@ def render_dashboard_page():
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
             font={'color': "#ffffff", 'family': "Plus Jakarta Sans"},
-            margin=dict(l=15, r=15, t=10, b=10),
+            margin=dict(l=10, r=10, t=10, b=10),
             height=160
         )
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         
-        st.markdown(
-            f"""
-                <div style="background-color: {score_color}1e; border: 1px solid {score_color}33; padding: 6px 14px; border-radius: 20px; font-weight: 700; color: {score_color}; display: inline-block; font-size: 12px; margin-top: 10px; text-transform: uppercase; letter-spacing: 0.02em;">
-                    {verdict}
-                </div>
-                <p style="margin: 15px 0 0 0; font-size: 12px; color: #cbd5e1; line-height: 1.5; text-align: center;">
-                    {verdict_desc}
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        verdict_html = f"""<div style="text-align: center;">
+<div style="background-color: {score_color}1e; border: 1px solid {score_color}33; padding: 6px 14px; border-radius: 20px; font-weight: 700; color: {score_color}; display: inline-block; font-size: 11px; text-transform: uppercase;">
+{verdict}
+</div>
+<p style="margin: 10px 0 0 0; font-size: 12px; color: #cbd5e1; line-height: 1.4;">
+{verdict_desc}
+</p>
+</div>"""
+        st.markdown(verdict_html, unsafe_allow_html=True)
         
     with col_breakdown:
-        st.markdown(
-            """
-            <div class="premium-card" style="padding: 24px; min-height: 380px; display: flex; flex-direction: column; justify-content: space-between;">
-                <h4 style="margin: 0 0 15px 0; color: #ffffff; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px;">Evaluation Breakdown</h4>
-            """,
-            unsafe_allow_html=True
-        )
-        tb = transparency["breakdown"]
+        tb = transparency.get("breakdown", {})
+        bars_items = [
+            ("Information Completeness", tb.get("information_completeness", 0), 15),
+            ("Prepayment & Foreclosure Terms", tb.get("prepayment_conditions", 0), 15),
+            ("Penalty Exposure", tb.get("penalty_exposure", 0), 15),
+            ("Fee Clarity", tb.get("fee_clarity", 0), 20),
+            ("Contract Simplicity", tb.get("contract_complexity", 0), 15),
+            ("Additional Charges Count", tb.get("additional_charges", 0), 20),
+        ]
         
-        # Custom HTML score bar helper
-        def draw_score_bar(label, value, max_val):
-            pct = (value / max_val) * 100
-            st.markdown(
-                f"""
-                <div style="margin-bottom: 15px; width: 100%;">
-                    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px;">
-                        <span style="color: #cbd5e1; font-weight: 600;">{label}</span>
-                        <span style="color: #94a3b8; font-weight: bold;">{value} / {max_val}</span>
-                    </div>
-                    <div style="background: rgba(255,255,255,0.04); height: 8px; border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.02); width: 100%;">
-                        <div style="background: linear-gradient(90deg, #6366f1 0%, #22d3ee 100%); width: {pct}%; height: 100%; border-radius: 4px;"></div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            
-        draw_score_bar("Information Completeness", tb["information_completeness"], 15)
-        draw_score_bar("Prepayment & Foreclosure Terms", tb["prepayment_conditions"], 15)
-        draw_score_bar("Penalty Exposure", tb["penalty_exposure"], 15)
-        draw_score_bar("Fee Clarity", tb["fee_clarity"], 20)
-        draw_score_bar("Contract Simplicity", tb["contract_complexity"], 15)
-        draw_score_bar("Additional Charges Count", tb["additional_charges"], 20)
-        st.markdown("</div>", unsafe_allow_html=True)
+        bars_inner = ""
+        for label, val, max_val in bars_items:
+            pct = (val / max_val * 100) if max_val > 0 else 0
+            bars_inner += f"""<div style="margin-bottom: 12px;">
+<div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+<span style="color: #cbd5e1; font-weight: 600;">{label}</span>
+<span style="color: #94a3b8; font-weight: bold;">{val} / {max_val}</span>
+</div>
+<div style="background: rgba(255,255,255,0.05); height: 8px; border-radius: 4px; overflow: hidden; width: 100%;">
+<div style="background: linear-gradient(90deg, #6366f1 0%, #38bdf8 100%); width: {pct}%; height: 100%; border-radius: 4px;"></div>
+</div>
+</div>"""
+
+        breakdown_html = f"""<div style="background: #0F1E33; border: 1px solid rgba(148,163,184,0.15); border-radius: 12px; padding: 20px;">
+<h4 style="margin: 0 0 15px 0; color: #ffffff; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 8px;">Evaluation Breakdown</h4>
+{bars_inner}
+</div>"""
+        st.markdown(breakdown_html, unsafe_allow_html=True)
 
     # 3-Category Verification Catalog Section
     st.markdown(

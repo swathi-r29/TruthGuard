@@ -97,29 +97,41 @@ def render_charges_page():
         risk_color = "#EF4444"
 
     # Render summary metrics cards
-    st.markdown(
-        f"""
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 25px;">
-            <div class="premium-card" style="padding: 15px; text-align: center; background: #0F1E33; border: 1px solid rgba(148,163,184,0.1); margin-bottom: 0;">
-                <div style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Charges Detected</div>
-                <div style="font-size: 22px; font-weight: 800; color: #38BDF8; font-family: 'Outfit', sans-serif;">{total_detected}</div>
-            </div>
-            <div class="premium-card" style="padding: 15px; text-align: center; background: #0F1E33; border: 1px solid rgba(148,163,184,0.1); margin-bottom: 0;">
-                <div style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Values Verified</div>
-                <div style="font-size: 22px; font-weight: 800; color: #10B981; font-family: 'Outfit', sans-serif;">{verified_vals}</div>
-            </div>
-            <div class="premium-card" style="padding: 15px; text-align: center; background: #0F1E33; border: 1px solid rgba(148,163,184,0.1); margin-bottom: 0;">
-                <div style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Values Unspecified</div>
-                <div style="font-size: 22px; font-weight: 800; color: #F59E0B; font-family: 'Outfit', sans-serif;">{unspecified_vals}</div>
-            </div>
-            <div class="premium-card" style="padding: 15px; text-align: center; background: #0F1E33; border: 1px solid rgba(148,163,184,0.1); margin-bottom: 0;">
-                <div style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Potential Risk Level</div>
-                <div style="font-size: 16px; font-weight: 800; color: {risk_color}; margin-top: 5px; font-family: 'Space Grotesk', sans-serif;">{overall_risk}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.markdown(
+            f"""<div style="padding: 15px; text-align: center; background: #0F1E33; border: 1px solid rgba(148,163,184,0.1); border-radius: 12px;">
+<div style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Charges Detected</div>
+<div style="font-size: 22px; font-weight: 800; color: #38BDF8; font-family: 'Outfit', sans-serif;">{total_detected}</div>
+</div>""",
+            unsafe_allow_html=True
+        )
+    with m2:
+        st.markdown(
+            f"""<div style="padding: 15px; text-align: center; background: #0F1E33; border: 1px solid rgba(148,163,184,0.1); border-radius: 12px;">
+<div style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Values Verified</div>
+<div style="font-size: 22px; font-weight: 800; color: #10B981; font-family: 'Outfit', sans-serif;">{verified_vals}</div>
+</div>""",
+            unsafe_allow_html=True
+        )
+    with m3:
+        st.markdown(
+            f"""<div style="padding: 15px; text-align: center; background: #0F1E33; border: 1px solid rgba(148,163,184,0.1); border-radius: 12px;">
+<div style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Values Unspecified</div>
+<div style="font-size: 22px; font-weight: 800; color: #F59E0B; font-family: 'Outfit', sans-serif;">{unspecified_vals}</div>
+</div>""",
+            unsafe_allow_html=True
+        )
+    with m4:
+        st.markdown(
+            f"""<div style="padding: 15px; text-align: center; background: #0F1E33; border: 1px solid rgba(148,163,184,0.1); border-radius: 12px;">
+<div style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Potential Risk Level</div>
+<div style="font-size: 16px; font-weight: 800; color: {risk_color}; margin-top: 5px; font-family: 'Space Grotesk', sans-serif;">{overall_risk}</div>
+</div>""",
+            unsafe_allow_html=True
+        )
+
+    st.write("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
 
     # Categorize charges for display
     upfront = [c for c in charges if c["classification"] in ["ADDITIONAL_COST", "TAX"]]

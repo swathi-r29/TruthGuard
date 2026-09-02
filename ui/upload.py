@@ -9,6 +9,8 @@ from modules.financial_engine import calculate_real_cost_metrics
 from modules.analyzer import calculate_transparency_score, calculate_effective_rates
 from modules.explanation.explainer import get_simple_explanation, generate_math_example
 from modules.ai_extraction.client import OllamaConnectionError, OllamaModelNotFoundError
+import textwrap
+from modules.active_loan import set_active_loan, get_active_loan
 
 def render_upload_page():
     st.markdown(
@@ -107,25 +109,77 @@ def render_upload_page():
                 unsafe_allow_html=True
             )
 
-    # File selection source
-    source = st.radio("Choose Document Source:", ["Use a Preloaded Sample Document", "Upload a New File"])
+    # Instant Demo Mode Cards
+    demo_html = """
+<div style="background: rgba(56, 189, 248, 0.04); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 12px; padding: 18px; margin-bottom: 20px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+        <div style="font-weight: 700; color: #38bdf8; font-size: 15px; font-family: 'Space Grotesk', sans-serif;">
+            ⚡ Instant Demo Mode (1-Click Presentation Audit)
+        </div>
+        <span style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 800; text-transform: uppercase;">Reviewer Fast-Path</span>
+    </div>
+    <div style="color: #94a3b8; font-size: 12px; margin-bottom: 12px;">
+        Click any case study below to instantly run the deterministic audit pipeline on sample PDF contracts without waiting on local LLM execution.
+    </div>
+</div>
+"""
+    st.markdown(textwrap.dedent(demo_html).strip(), unsafe_allow_html=True)
 
+    demo_col1, demo_col2, demo_col3, demo_col4 = st.columns(4)
     file_bytes = None
     file_name = None
 
-    if source == "Use a Preloaded Sample Document":
+    with demo_col1:
+        if st.button("🏢 Apex Personal Loan\n(₹3L @ 14.5%)", use_container_width=True):
+            s_path = Path("sample_documents/apex_personal_loan_agreement.pdf")
+            if s_path.exists():
+                with open(s_path, "rb") as f:
+                    file_bytes = f.read()
+                file_name = s_path.name
+
+    with demo_col2:
+        if st.button("💳 Nova Credit Card\n(42% APR Terms)", use_container_width=True):
+            s_path = Path("sample_documents/nova_credit_card_terms.pdf")
+            if s_path.exists():
+                with open(s_path, "rb") as f:
+                    file_bytes = f.read()
+                file_name = s_path.name
+
+    with demo_col3:
+        if st.button("🛒 SplitPay BNPL\n(Zero-Interest Promo)", use_container_width=True):
+            s_path = Path("sample_documents/splitpay_bnpl_contract.pdf")
+            if s_path.exists():
+                with open(s_path, "rb") as f:
+                    file_bytes = f.read()
+                file_name = s_path.name
+
+    with demo_col4:
+        if st.button("📄 Scanned Micro Loan\n(OCR Fallback)", use_container_width=True):
+            s_path = Path("sample_documents/scanned_micro_loan_agreement.pdf")
+            if not s_path.exists():
+                s_path = Path("DebtDetox_Validation_Loan_Agreement.pdf")
+            if s_path.exists():
+                with open(s_path, "rb") as f:
+                    file_bytes = f.read()
+                file_name = s_path.name
+
+    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+    # File selection source
+    source = st.radio("Or Select Custom Input Method:", ["Upload a New File", "Select from All Sample Files"])
+
+    if source == "Select from All Sample Files":
         sample_dir = Path("sample_documents")
         if sample_dir.exists():
             samples = [f for f in os.listdir(sample_dir) if f.endswith(".pdf")]
             if samples:
                 selected_sample = st.selectbox("Select a sample document to analyze:", samples)
                 sample_path = sample_dir / selected_sample
-                if st.button("Analyze Selected Sample"):
+                if st.button("Analyze Selected File"):
                     with open(sample_path, "rb") as f:
                         file_bytes = f.read()
                     file_name = selected_sample
             else:
-                st.warning("No sample PDF files found in the `sample_documents` directory. Please run `sample_documents/generate_samples.py`.")
+                st.warning("No sample PDF files found in `sample_documents`.")
         else:
             st.warning("Sample documents folder not found.")
             
@@ -330,20 +384,23 @@ def run_analysis_pipeline(file_bytes: bytes, file_name: str):
             audit_status = "VERIFIED"
             data_source_badge = "DATA SOURCE: CURRENT UPLOADED DOCUMENT"
             
-        # Reset and save fresh state
-        st.session_state.doc_name = file_name
-        st.session_state.doc_type = doc_result.get("file_type", "")
-        st.session_state.total_pages = total_pages
-        st.session_state.ocr_used = ocr_used
-        st.session_state.extracted = extracted
-        st.session_state.charges = charges
-        st.session_state.metrics = metrics
-        st.session_state.effective_rates = effective_rates
-        st.session_state.transparency = transparency
-        st.session_state.explanations = explanations
-        st.session_state.math_examples = math_examples
-        st.session_state.audit_status = audit_status
-        st.session_state.data_source_badge = data_source_badge
+        # Reset and save fresh ACTIVE_LOAN single source of truth state
+        set_active_loan(
+            st_session=st.session_state,
+            doc_name=file_name,
+            doc_type=doc_result.get("file_type", ""),
+            total_pages=total_pages,
+            ocr_used=ocr_used,
+            extracted=extracted,
+            charges=charges,
+            metrics=metrics,
+            effective_rates=effective_rates,
+            transparency=transparency,
+            explanations=explanations,
+            math_examples=math_examples,
+            audit_status=audit_status,
+            data_source_badge=data_source_badge
+        )
         st.session_state.debts_list = []  # Clear previous debt inventory
         
         # Success message with quick instructions

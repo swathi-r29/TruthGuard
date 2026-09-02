@@ -96,29 +96,25 @@ def render_report_page():
         
     concerns_html = "".join([f"<li style='margin-bottom: 5px;'>{c}</li>" for c in concerns])
     
-    st.markdown(
-        f"""
-        <div style="background: #0F1E33; border: 1px solid rgba(148,163,184,0.15); border-radius: 16px; padding: 24px; margin-bottom: 25px; box-shadow: 0 4px 20px rgba(0,0,0,0.25);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
-                <div>
-                    <span style="font-size: 10px; color: #94A3B8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;">Loan Audit Evaluation</span>
-                    <h2 style="margin: 5px 0 0 0; color: #F8FAFC; font-family: 'Space Grotesk', sans-serif; font-weight: 800; font-size: 20px;">LOAN HEALTH SCORE</h2>
-                </div>
-                <div style="text-align: right;">
-                    <div style="font-size: 28px; font-weight: 800; color: {health_color}; font-family: 'Outfit', sans-serif;">{score} <span style="font-size: 14px; color: #94A3B8; font-weight: 500;">/ 100</span></div>
-                    <span style="background: {health_color}1e; color: {health_color}; border: 1px solid {health_color}33; font-size: 8px; font-weight: 800; padding: 2px 10px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.05em; display: inline-block; margin-top: 4px;">{health_label}</span>
-                </div>
-            </div>
-            <div style="border-top: 1px solid rgba(148,163,184,0.15); padding-top: 15px;">
-                <div style="font-size: 11px; color: #F8FAFC; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Main concerns:</div>
-                <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #94A3B8; line-height: 1.6;">
-                    {concerns_html}
-                </ul>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    card_html = f"""<div style="background: #0F1E33; border: 1px solid rgba(148,163,184,0.15); border-radius: 16px; padding: 24px; margin-bottom: 25px; box-shadow: 0 4px 20px rgba(0,0,0,0.25);">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
+<div>
+<span style="font-size: 10px; color: #94A3B8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;">Loan Audit Evaluation</span>
+<h2 style="margin: 5px 0 0 0; color: #F8FAFC; font-family: 'Space Grotesk', sans-serif; font-weight: 800; font-size: 20px;">LOAN HEALTH SCORE</h2>
+</div>
+<div style="text-align: right;">
+<div style="font-size: 28px; font-weight: 800; color: {health_color}; font-family: 'Outfit', sans-serif;">{score} <span style="font-size: 14px; color: #94A3B8; font-weight: 500;">/ 100</span></div>
+<span style="background: {health_color}1e; color: {health_color}; border: 1px solid {health_color}33; font-size: 8px; font-weight: 800; padding: 2px 10px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.05em; display: inline-block; margin-top: 4px;">{health_label}</span>
+</div>
+</div>
+<div style="border-top: 1px solid rgba(148,163,184,0.15); padding-top: 15px;">
+<div style="font-size: 11px; color: #F8FAFC; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">Main concerns:</div>
+<ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #94A3B8; line-height: 1.6;">
+{concerns_html}
+</ul>
+</div>
+</div>"""
+    st.markdown(card_html, unsafe_allow_html=True)
 
     # Create tabs
     tab1, tab2 = st.tabs(["📋 Audit Report & Recommendations", "💬 AI Negotiation Letter"])
@@ -263,16 +259,41 @@ def render_report_page():
             recommendations=recommendations
         )
     
-        st.write("<div style='height: 15px;'></div>", unsafe_allow_html=True)
-    
-        # Download Button
+        # Generate PDF Certificate raw bytes
+        from modules.active_loan import get_active_loan
+        from modules.reporting.pdf_generator import generate_pdf_audit_report
+        
+        active_loan = get_active_loan(st.session_state)
+        pdf_bytes = None
+        if active_loan:
+            try:
+                pdf_bytes = generate_pdf_audit_report(active_loan)
+            except Exception as e:
+                st.warning(f"Note: PDF generation notice: {e}")
+
         file_base = doc_name.rsplit(".", 1)[0]
-        st.download_button(
-            label="📥 Download Markdown Report",
-            data=report_md,
-            file_name=f"debt_detox_report_{file_base}.md",
-            mime="text/markdown"
-        )
+        col_dl1, col_dl2 = st.columns(2)
+        
+        with col_dl1:
+            if pdf_bytes:
+                st.download_button(
+                    label="📄 Download Professional PDF Certificate (.pdf)",
+                    data=pdf_bytes,
+                    file_name=f"Debt_Detox_Audit_Certificate_{file_base}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            else:
+                st.button("📄 PDF Certificate Unavailable", disabled=True, use_container_width=True)
+
+        with col_dl2:
+            st.download_button(
+                label="📥 Download Markdown Report (.md)",
+                data=report_md,
+                file_name=f"debt_detox_report_{file_base}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
     
         st.markdown("---")
         st.markdown(

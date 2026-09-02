@@ -7,6 +7,7 @@ from ui.comparison import render_comparison_page
 from ui.simulator import render_simulator_page
 from ui.report import render_report_page
 from ui.chatbot import render_chatbot_page
+from ui.negotiation_ui import render_negotiation_page
 
 # Set up Streamlit Page Configuration
 st.set_page_config(
@@ -139,6 +140,20 @@ st.markdown(
         box-shadow: 0 6px 20px rgba(56, 189, 248, 0.3) !important;
         background: var(--button-hover) !important;
         color: #ffffff !important;
+    }
+
+    /* Dark Input & TextArea High Contrast Override */
+    div[data-baseweb="textarea"] textarea, div[data-baseweb="input"] input, textarea, input {
+        background-color: #0F1E33 !important;
+        color: #F8FAFC !important;
+        border: 1px solid rgba(148, 163, 184, 0.25) !important;
+        border-radius: 8px !important;
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+    }
+
+    div[data-baseweb="textarea"], div[data-baseweb="input"] {
+        background-color: #0F1E33 !important;
+        border-radius: 8px !important;
     }
     
     /* Styled Alert/Success/Warning containers */
@@ -405,6 +420,7 @@ menu_options = [
     "📊 Loan Truth Dashboard",
     "💸 Charges & Hidden Costs",
     "🔎 Verification Evidence",
+    "📧 Dispute & Negotiation Letter",
     "⚖️ Multi-Debt Strategy",
     "🧮 Payoff Simulator",
     "📋 Download Report",
@@ -438,6 +454,8 @@ elif selected_menu == "💸 Charges & Hidden Costs":
     render_charges_page()
 elif selected_menu == "🔎 Verification Evidence":
     render_evidence_page()
+elif selected_menu == "📧 Dispute & Negotiation Letter":
+    render_negotiation_page()
 elif selected_menu == "⚖️ Multi-Debt Strategy":
     render_comparison_page()
 elif selected_menu == "🧮 Payoff Simulator":

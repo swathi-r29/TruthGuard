@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 from modules.ai_extraction.schemas import LoanExtractionResult
 
 def render_evidence_page():
@@ -168,115 +169,51 @@ def render_evidence_page():
         )
         return
 
-    # Render HTML Trace Table
-    st.markdown(
-        """
-        <h4 style="margin-top: 15px; margin-bottom: 15px; font-size: 15px; font-family: 'Space Grotesk', sans-serif; font-weight: 700; color: #ffffff;">📋 Verification Trace Matrix</h4>
-        """,
-        unsafe_allow_html=True
-    )
+    # Render Native Streamlit Verification Matrix Table
+    st.markdown("### 📋 Verification Trace Matrix")
     
-    rows_html = ""
+    df_rows = []
     for r in records:
-        status = r["Status"]
-        if status == "Verified":
-            status_color = "#10b981"
-        elif status == "Keyword Detected":
-            status_color = "#f59e0b"
-        elif status == "Needs Review":
-            status_color = "#EF4444"
-        else:
-            status_color = "#94a3b8"
-        
-        rows_html += f"""
-        <tr style="border-bottom: 1px solid rgba(148,163,184,0.1); color: #cbd5e1; font-size: 12px;">
-            <td style="padding: 10px 14px; font-weight: 600; color: #ffffff;">{r['Field']}</td>
-            <td style="padding: 10px 14px;"><code>{r['Extracted Value']}</code></td>
-            <td style="padding: 10px 14px; text-align: center;">{f'Page {r["Page"]}' if isinstance(r["Page"], int) else r["Page"]}</td>
-            <td style="padding: 10px 14px; text-align: center; font-weight: 700; text-transform: uppercase;">{r['Confidence']}</td>
-            <td style="padding: 10px 14px; text-align: right;"><span style="color: {status_color}; font-weight: 700;">{status}</span></td>
-        </tr>
-        """
-        
-    st.markdown(
-        f"""
-        <div style="overflow-x: auto; margin-bottom: 25px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.15);">
-            <table style="width:100%; border-collapse: collapse; background: #0F1E33; text-align: left;">
-                <thead>
-                    <tr style="background: #13253D; border-bottom: 1px solid rgba(148,163,184,0.15); color: #F8FAFC; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">
-                        <th style="padding: 12px 14px;">Term</th>
-                        <th style="padding: 12px 14px;">Extracted Value</th>
-                        <th style="padding: 12px 14px; text-align: center;">Evidence Page</th>
-                        <th style="padding: 12px 14px; text-align: center;">Confidence</th>
-                        <th style="padding: 12px 14px; text-align: right;">Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-            </table>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+        df_rows.append({
+            "Term": r["Field"],
+            "Extracted Value": r["Extracted Value"],
+            "Evidence Page": f"Page {r['Page']}" if isinstance(r["Page"], int) else str(r["Page"]),
+            "Confidence": str(r["Confidence"]).upper(),
+            "Status": str(r["Status"])
+        })
 
-    # Detailed Audit Snippets
-    st.markdown(
-        """
-        <h4 style="margin-top: 30px; margin-bottom: 15px; font-size: 15px; font-family: 'Space Grotesk', sans-serif; font-weight: 700; color: #ffffff;">🔍 Verifiable Document Snippets</h4>
-        <p style="margin: -10px 0 20px 0; color: #94a3b8; font-size: 12px;">Expand any parameter below to inspect the verbatim clause text and matching highlight.</p>
-        """,
-        unsafe_allow_html=True
-    )
+    df = pd.DataFrame(df_rows)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # Detailed Audit Snippets using Native Streamlit Components
+    st.markdown("---")
+    st.markdown("### 🔍 Verifiable Document Snippets")
+    st.markdown("<p style='color: #94a3b8; font-size: 12px; margin-top: -10px; margin-bottom: 15px;'>Expand any parameter below to inspect verbatim clause text and explainability rationale.</p>", unsafe_allow_html=True)
     
     for r in records:
         status = r["Status"]
         if status == "Not Found":
             continue
-            
-        conf_color = "#10b981" if r["Confidence"] == "high" else ("#f59e0b" if r["Confidence"] == "medium" else "#f43f5e")
-        if status == "Verified":
-            status_color = "#10b981"
-        elif status == "Keyword Detected":
-            status_color = "#f59e0b"
-        else:
-            status_color = "#ef4444"
         
         from modules.explanation.explainer import get_simple_explanation, generate_math_example
         explanation = get_simple_explanation(r['Field'], r["Evidence Snippet"])
         math_eg = generate_math_example(r['Field'], r.get("Raw Value"), None, None)
-        
-        math_html = ""
-        if math_eg:
-            res_val = math_eg.get('result')
-            res_str = f"₹{res_val:,.2f}" if isinstance(res_val, (int, float)) else str(res_val)
-            math_html = f"""
-            <div style="background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.15); border-radius: 6px; padding: 10px; margin-bottom: 10px; font-size: 12px; color: #cbd5e1;">
-                💡 <b>Math Impact Scenario ({math_eg.get('scenario', 'Calculation')}):</b> {math_eg.get('formula', '')} = <b>{res_str}</b>
-            </div>
-            """
 
         with st.expander(f"🔎 Audit Details: {r['Field']} ({status})"):
             snippet = r["Evidence Snippet"]
-            highlighted_snippet = snippet
-            val_str = str(r["Raw Value"]) if r.get("Raw Value") is not None else ""
-            if val_str and val_str in snippet:
-                highlighted_snippet = snippet.replace(val_str, f"<span style='background-color: rgba(56, 189, 248, 0.25); color: #38BDF8; font-weight: 700; padding: 2px 6px; border-radius: 4px;'>{val_str}</span>")
+            st.markdown(f"**Verbatim Contract Quote:**")
+            st.info(f'"{snippet}"')
+            st.markdown(f"**Plain-English Explanation:** {explanation}")
             
-            st.markdown(
-                f"""
-                <div style="background-color: rgba(0, 0, 0, 0.25); padding: 16px; border-radius: 8px; font-size: 13px; color: #cbd5e1; border: 1px solid rgba(148,163,184,0.1); font-family: monospace; line-height: 1.6; font-style: italic; margin-bottom: 10px;">
-                    "{highlighted_snippet}"
-                </div>
-                <div style="background: rgba(56, 189, 248, 0.04); border-left: 3px solid #38bdf8; padding: 10px 14px; border-radius: 6px; font-size: 12px; color: #f8fafc; margin-bottom: 10px; line-height: 1.5;">
-                    <b>Plain-English Explainability Rationale:</b> {explanation}
-                </div>
-                {math_html}
-                <div style="display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; padding: 4px 4px 0 4px;">
-                    <span>Extraction Method: <b>{r['Source'].replace('_', ' ').title()}</b></span>
-                    <span>Confidence Score: <b style="color: {conf_color}; text-transform: uppercase;">{r['Confidence']}</b></span>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            if math_eg:
+                res_val = math_eg.get('result')
+                res_str = f"₹{res_val:,.2f}" if isinstance(res_val, (int, float)) else str(res_val)
+                st.success(f"💡 **Math Impact ({math_eg.get('scenario', 'Calculation')}):** {math_eg.get('formula', '')} = **{res_str}**")
+
+            c_src, c_conf = st.columns(2)
+            with c_src:
+                st.caption(f"Extraction Method: **{r['Source'].replace('_', ' ').title()}**")
+            with c_conf:
+                st.caption(f"Confidence Level: **{str(r['Confidence']).upper()}**")
+
 

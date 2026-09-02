@@ -112,32 +112,38 @@ def render_comparison_page():
                 unsafe_allow_html=True
             )
             
-            # Display 3 strategy preview cards side-by-side
-            st.markdown(
-                """
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 25px;">
-                    <div class="premium-card glow-border-cyan" style="background: #0F1E33; border: 1px solid rgba(148,163,184,0.08); padding: 20px; margin-bottom: 0;">
-                        <div style="font-weight: 700; color: #38BDF8; font-size: 14px; margin-bottom: 8px; font-family: 'Space Grotesk', sans-serif;">AVALANCHE</div>
-                        <p style="font-size: 11px; color: #cbd5e1; line-height: 1.5; margin: 0;">
-                            Pay highest-interest debt first. Best for minimizing interest.
-                        </p>
-                    </div>
-                    <div class="premium-card glow-border-indigo" style="background: #0F1E33; border: 1px solid rgba(148,163,184,0.08); padding: 20px; margin-bottom: 0;">
-                        <div style="font-weight: 700; color: #6366F1; font-size: 14px; margin-bottom: 8px; font-family: 'Space Grotesk', sans-serif;">SNOWBALL</div>
-                        <p style="font-size: 11px; color: #cbd5e1; line-height: 1.5; margin: 0;">
-                            Pay smallest balance first. Best for quick wins and motivation.
-                        </p>
-                    </div>
-                    <div class="premium-card glow-border-emerald" style="background: #0F1E33; border: 1px solid rgba(148,163,184,0.08); padding: 20px; margin-bottom: 0;">
-                        <div style="font-weight: 700; color: #10B981; font-size: 14px; margin-bottom: 8px; font-family: 'Space Grotesk', sans-serif;">AI RECOMMENDED</div>
-                        <p style="font-size: 11px; color: #cbd5e1; line-height: 1.5; margin: 0;">
-                            Recommend a strategy based on user priorities and debt characteristics.
-                        </p>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            # Display 3 strategy preview cards side-by-side using Streamlit columns
+            c_av, c_sn, c_ai = st.columns(3)
+            with c_av:
+                st.markdown(
+                    """<div style="background: #0F1E33; border: 1px solid rgba(148,163,184,0.12); padding: 20px; border-radius: 12px; height: 100%;">
+<div style="font-weight: 700; color: #38BDF8; font-size: 14px; margin-bottom: 8px; font-family: 'Space Grotesk', sans-serif;">AVALANCHE</div>
+<p style="font-size: 11px; color: #cbd5e1; line-height: 1.5; margin: 0;">
+Pay highest-interest debt first. Best for minimizing interest.
+</p>
+</div>""",
+                    unsafe_allow_html=True
+                )
+            with c_sn:
+                st.markdown(
+                    """<div style="background: #0F1E33; border: 1px solid rgba(148,163,184,0.12); padding: 20px; border-radius: 12px; height: 100%;">
+<div style="font-weight: 700; color: #6366F1; font-size: 14px; margin-bottom: 8px; font-family: 'Space Grotesk', sans-serif;">SNOWBALL</div>
+<p style="font-size: 11px; color: #cbd5e1; line-height: 1.5; margin: 0;">
+Pay smallest balance first. Best for quick wins and motivation.
+</p>
+</div>""",
+                    unsafe_allow_html=True
+                )
+            with c_ai:
+                st.markdown(
+                    """<div style="background: #0F1E33; border: 1px solid rgba(148,163,184,0.12); padding: 20px; border-radius: 12px; height: 100%;">
+<div style="font-weight: 700; color: #10B981; font-size: 14px; margin-bottom: 8px; font-family: 'Space Grotesk', sans-serif;">AI RECOMMENDED</div>
+<p style="font-size: 11px; color: #cbd5e1; line-height: 1.5; margin: 0;">
+Recommend a strategy based on user priorities and debt characteristics.
+</p>
+</div>""",
+                    unsafe_allow_html=True
+                )
             
             if not st.session_state.show_add_form:
                 if st.button("➕ Add Your First Debt"):
