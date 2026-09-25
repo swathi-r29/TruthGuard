@@ -109,16 +109,23 @@ def process_document(file_bytes: bytes, file_name: str) -> dict:
                 page_text = page.get_text("text", sort=True)
                 cleaned_text = clean_text(page_text)
                 
-                # Check if page has sufficient text. If not, trigger OCR fallback for this page
-                if len(cleaned_text.strip()) < 50:
+                # Check if page has sufficient text. If not or if it contains embedded scanned images, trigger OCR fallback
+                has_images = bool(page.get_images())
+                word_count = len(cleaned_text.strip().split())
+                
+                if len(cleaned_text.strip()) < 50 or (word_count < 15 and has_images):
                     try:
-                        # Render page as PNG image bytes
+                        # Render page as PNG image bytes at 300 DPI for high OCR accuracy
                         pix = page.get_pixmap(dpi=300)
                         png_bytes = pix.tobytes("png")
                         
                         ocr_text = extract_text_from_image(png_bytes)
-                        cleaned_text = clean_text(ocr_text)
-                        ocr_used = True
+                        ocr_clean = clean_text(ocr_text)
+                        
+                        # Use OCR text if it extracted meaningful content
+                        if len(ocr_clean.strip()) >= len(cleaned_text.strip()):
+                            cleaned_text = ocr_clean
+                            ocr_used = True
                     except TesseractNotInstalledError as t_err:
                         import logging
                         logging.warning(f"Tesseract OCR not installed, relying on native text for page {idx + 1}: {t_err}")

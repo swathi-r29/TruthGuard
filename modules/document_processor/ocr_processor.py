@@ -1,7 +1,7 @@
 import io
 import logging
 import fitz  # PyMuPDF
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageOps
 import pytesseract
 from .text_cleaner import clean_text
 
@@ -35,37 +35,47 @@ def verify_tesseract():
 
 def preprocess_image_for_ocr(image: Image.Image) -> Image.Image:
     """
-    Applies image processing steps (grayscale, contrast enhancement, thresholding)
-    to optimize text clarity for Tesseract OCR.
+    Applies image processing steps (grayscale, dynamic autocontrast, contrast boosting,
+    sharpness enhancement) to optimize text clarity and preserve financial numbers/tables for OCR.
     """
     # 1. Convert to grayscale
     if image.mode != 'L':
         image = image.convert('L')
     
-    # 2. Resize to double resolution if it's a small image (to improve small print accuracy)
-    if image.width < 1500:
-        factor = 2.0
+    # 2. Rescale image if low resolution to improve small print accuracy
+    if image.width < 1800:
+        factor = max(2.0, 1800.0 / image.width)
         new_size = (int(image.width * factor), int(image.height * factor))
         image = image.resize(new_size, Image.Resampling.LANCZOS)
         
-    # 3. Boost contrast
-    enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(2.0)
+    # 3. Dynamic autocontrast to balance histogram
+    image = ImageOps.autocontrast(image, cutoff=1)
     
-    # 4. Binarization (thresholding) to create sharp black-and-white image
-    image = image.point(lambda p: 255 if p > 127 else 0, '1')
+    # 4. Moderate contrast boost to preserve faint text without clipping fine print
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(1.8)
+    
+    # 5. Sharpness enhancement to make numbers, decimals, and symbols crisp
+    sharpener = ImageEnhance.Sharpness(image)
+    image = sharpener.enhance(1.6)
     
     return image
 
 def extract_text_from_image(image_bytes: bytes) -> str:
     """
-    Runs Tesseract OCR on a raw image stream after preprocessing.
+    Runs Tesseract OCR on a raw image stream after advanced preprocessing.
     """
     verify_tesseract()
     try:
         image = Image.open(io.BytesIO(image_bytes))
         image = preprocess_image_for_ocr(image)
-        text = pytesseract.image_to_string(image)
+        # Try page segmentation mode 6 (uniform block of text) with fallback to default
+        try:
+            text = pytesseract.image_to_string(image, config='--psm 6 --oem 3')
+            if len(text.strip()) < 10:
+                text = pytesseract.image_to_string(image, config='--psm 3 --oem 3')
+        except Exception:
+            text = pytesseract.image_to_string(image)
         return text
     except Exception as e:
         logging.error(f"Error during OCR extraction of image: {e}")
@@ -88,10 +98,8 @@ def extract_text_from_scanned_pdf(pdf_bytes: bytes) -> list[dict]:
             png_bytes = pix.tobytes("png")
             
             # Load into Pillow, preprocess, and perform OCR
-            image = Image.open(io.BytesIO(png_bytes))
-            image = preprocess_image_for_ocr(image)
-            text = pytesseract.image_to_string(image)
-            cleaned_text = clean_text(text)
+            ocr_text = extract_text_from_image(png_bytes)
+            cleaned_text = clean_text(ocr_text)
             
             pages.append({
                 "page_number": idx + 1,
@@ -104,3 +112,4 @@ def extract_text_from_scanned_pdf(pdf_bytes: bytes) -> list[dict]:
         raise e
         
     return pages
+

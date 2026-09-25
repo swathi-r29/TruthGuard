@@ -197,5 +197,57 @@ class TestDocumentProcessor(unittest.TestCase):
         self.assertIn("Foreclosure Charge", text)
         self.assertIn("Late Payment Fee", text)
 
+    @patch('modules.document_processor.ocr_processor.pytesseract.get_tesseract_version')
+    @patch('modules.document_processor.ocr_processor.pytesseract.image_to_string')
+    def test_scanned_multipage_pdf(self, mock_image_to_string, mock_get_tesseract_version):
+        """Test multi-page scanned PDF triggers OCR on all pages and preserves page structure."""
+        mock_get_tesseract_version.return_value = "0.3.13"
+        mock_image_to_string.side_effect = [
+            "Scanned Page 1: Loan Amount ₹5,00,000.",
+            "Scanned Page 2: Late Payment Penalty Rs. 1,000."
+        ]
+
+        doc = fitz.open()
+        doc.new_page()  # Blank page 1
+        doc.new_page()  # Blank page 2
+        pdf_bytes = doc.write()
+        doc.close()
+
+        res = process_document(pdf_bytes, "scanned_multipage.pdf")
+        self.assertTrue(res["success"])
+        self.assertTrue(res["ocr_used"])
+        self.assertEqual(res["total_pages"], 2)
+        self.assertEqual(len(res["pages"]), 2)
+        self.assertIn("₹5,00,000", res["pages"][0]["text"])
+        self.assertIn("Rs. 1,000", res["pages"][1]["text"])
+
+    @patch('modules.document_processor.ocr_processor.pytesseract.get_tesseract_version')
+    @patch('modules.document_processor.ocr_processor.pytesseract.image_to_string')
+    def test_jpeg_and_png_image_inputs(self, mock_image_to_string, mock_get_tesseract_version):
+        """Test JPEG, JPG, and PNG image input handling."""
+        mock_get_tesseract_version.return_value = "0.3.13"
+        mock_image_to_string.return_value = "Extracted Image Content: Processing Fee 1.5%."
+
+        img = Image.new("RGB", (100, 100), color="white")
+        
+        # Test JPEG
+        img_io_jpeg = io.BytesIO()
+        img.save(img_io_jpeg, format="JPEG")
+        res_jpeg = process_document(img_io_jpeg.getvalue(), "scan.jpeg")
+        self.assertTrue(res_jpeg["success"])
+        self.assertTrue(res_jpeg["ocr_used"])
+        self.assertEqual(res_jpeg["file_type"], "jpeg")
+        self.assertIn("1.5%", res_jpeg["full_text"])
+
+        # Test PNG
+        img_io_png = io.BytesIO()
+        img.save(img_io_png, format="PNG")
+        res_png = process_document(img_io_png.getvalue(), "scan.png")
+        self.assertTrue(res_png["success"])
+        self.assertTrue(res_png["ocr_used"])
+        self.assertEqual(res_png["file_type"], "png")
+        self.assertIn("1.5%", res_png["full_text"])
+
 if __name__ == "__main__":
     unittest.main()
+

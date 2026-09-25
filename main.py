@@ -92,7 +92,8 @@ def compile_analysis_payload(
     charges_list: List[Dict[str, Any]],
     metrics: Dict[str, Any],
     effective_rates: Dict[str, Any],
-    transparency: Dict[str, Any]
+    transparency: Dict[str, Any],
+    document_text: str = ""
 ) -> Dict[str, Any]:
     """Compiles metrics, charges, explanations, and math examples into a unified UI payload."""
     
@@ -202,7 +203,8 @@ def compile_analysis_payload(
         "charges": charges_list,
         "explanations": explanations,
         "math_examples": math_examples,
-        "compliance_alerts": compliance_alerts
+        "compliance_alerts": compliance_alerts,
+        "document_text": document_text
     }
 
 # --- ROUTES ---
@@ -259,6 +261,7 @@ async def analyze_document(file: UploadFile = File(...)):
         total_pages = doc_result["total_pages"]
         ocr_used = doc_result["ocr_used"]
         file_type = doc_result.get("file_type", "pdf")
+        full_text = doc_result.get("full_text", "")
         
         # 2. Extract Terms (with holistic + signature bypass support)
         extractor = DocumentExtractor()
@@ -304,7 +307,8 @@ async def analyze_document(file: UploadFile = File(...)):
             charges_list=charges,
             metrics=metrics,
             effective_rates=effective_rates,
-            transparency=transparency
+            transparency=transparency,
+            document_text=full_text
         )
         return payload
         
@@ -404,18 +408,24 @@ def compare_debts(inputs: StrategyInput):
 
 @app.post("/api/chat")
 def chat_with_loan(inputs: ChatInput):
+    REFUSAL_MSG = "This information is not available in the uploaded document"
+
+    ctx = inputs.context_text or ""
+    if "No active document analyzed" in ctx or not ctx.strip():
+        return {"response": REFUSAL_MSG}
+
     try:
         from modules.ai_extraction.client import OllamaClient
         client = OllamaClient()
         
-        # Build prompt using context and history
         system_prompt = (
-            "You are Debt Detox AI, a consumer finance advisor chatbot. "
-            "You help users understand their loan agreement terms, fees, interest rates, and compliance alerts. "
-            "Below is the verified contract context extracted from their document:\n"
+            "You are the Debt Detox AI Loan Assistant. Your ONLY task is to answer user questions using strictly and exclusively the uploaded loan document context provided below.\n\n"
+            "STRICT RULES:\n"
+            "1. Answer ONLY questions directly related to the currently uploaded loan document.\n"
+            "2. Fetch answers strictly and exclusively from the provided document context.\n"
+            "3. If the answer is not present in the uploaded document, clearly say: \"This information is not available in the uploaded document\".\n"
+            "4. Do NOT use general knowledge, assumptions, hallucinations, outside financial advice, or external information under any circumstances.\n\n"
             f"--- CONTRACT CONTEXT ---\n{inputs.context_text}\n-----------------------\n"
-            "Use only this context to answer. Be helpful, concise, and direct. Explain calculations if asked. "
-            "If the answer is not in the context, politely state that you can't find it in the agreement details."
         )
         
         # Format conversation history
@@ -428,54 +438,60 @@ def chat_with_loan(inputs: ChatInput):
         # Call LLM. OllamaClient's generate_json expects system prompt and returns JSON.
         prompt = (
             f"{conversation_prompt}\n"
-            "Respond in JSON format: {\"response\": \"your actual text response here\"}"
+            "Respond in JSON format: {\"response\": \"your clear answer strictly from context or \\\"This information is not available in the uploaded document\\\"\"}"
         )
         
         res = client.generate_json(prompt, system_prompt)
         if isinstance(res, dict) and "response" in res:
-            return {"response": res["response"]}
-        else:
-            return {"response": str(res)}
+            ans = res["response"].strip()
+            if ans:
+                return {"response": ans}
             
     except Exception as e:
         logger.error(f"Error in chat endpoint: {e}")
-        # Deterministic Contract QA Fallback Engine
-        msg = inputs.message.lower()
-        ctx = inputs.context_text or ""
         
-        if "No active document analyzed" in ctx or not ctx.strip():
-            return {"response": "Please upload a loan document first so I can analyze its specific clauses, interest rates, and fees."}
+    # Fallback QA Engine
+    msg = inputs.message.lower().strip()
+    ctx_lower = ctx.lower()
+    
+    if any(w in msg for w in ["fee", "hidden", "charge", "cost"]):
+        if "extracted charges:" in ctx_lower:
+            charges_part = ctx.split("Extracted Charges:")[1].split("Regulatory Warnings:")[0].strip()
+            if charges_part and charges_part != "None":
+                return {"response": f"Here are the charges extracted from your document:\n\n{charges_part}"}
+        lines = [l for l in ctx.split("\n") if any(k in l.lower() for k in ["fee", "charge", "cost"])]
+        if lines:
+            return {"response": "Here are the charge details in your document:\n\n" + "\n".join(lines)}
             
-        if any(w in msg for w in ["fee", "hidden", "insurance", "charge", "cost"]):
-            response_text = "Here are the charges extracted from your document:\n\n"
-            if "Extracted Charges:" in ctx:
-                charges_part = ctx.split("Extracted Charges:")[1].split("Regulatory Warnings:")[0].strip()
-                response_text += charges_part if charges_part else "No extra hidden fees detected."
-            else:
-                response_text += "No mandatory insurance or extra hidden fees were found in the extracted summary."
-            return {"response": response_text}
+    if "insurance" in msg:
+        if "insurance" in ctx_lower:
+            lines = [l for l in ctx.split("\n") if "insurance" in l.lower()]
+            if lines:
+                return {"response": "Here are the insurance details in your document:\n\n" + "\n".join(lines)}
+        return {"response": REFUSAL_MSG}
+
+    if any(w in msg for w in ["penalty", "late", "prepay", "foreclos", "bounce"]):
+        lines = [l for l in ctx.split("\n") if any(k in l.lower() for k in ["penalty", "late", "prepay", "foreclos", "bounce"])]
+        if lines:
+            return {"response": "Here are the penalty clauses identified in your contract:\n\n" + "\n".join(lines)}
             
-        elif any(w in msg for w in ["penalty", "late", "prepay", "foreclos", "bounce"]):
-            if "Extracted Charges:" in ctx:
-                charges_part = ctx.split("Extracted Charges:")[1].split("Regulatory Warnings:")[0].strip()
-                penalties = [line for line in charges_part.split("\n") if any(p in line.lower() for p in ["penalty", "late", "bounce", "prepay", "foreclos"])]
-                if penalties:
-                    return {"response": "Here are the penalty and bounce clauses identified in your contract:\n\n" + "\n".join(penalties)}
-            return {"response": "No explicit penalty or late payment fee was extracted in the key charges summary."}
+    if any(w in msg for w in ["warning", "alert", "compliance", "rbi", "risk"]):
+        if "regulatory warnings:" in ctx_lower:
+            alerts_part = ctx.split("Regulatory Warnings:")[1].strip()
+            if alerts_part and alerts_part != "None":
+                return {"response": "Here are the regulatory compliance warnings for your contract:\n\n" + alerts_part}
             
-        elif any(w in msg for w in ["warning", "alert", "compliance", "rbi", "risk"]):
-            if "Regulatory Warnings:" in ctx:
-                alerts_part = ctx.split("Regulatory Warnings:")[1].strip()
-                if alerts_part and alerts_part != "None":
-                    return {"response": "Here are the regulatory compliance warnings for your contract:\n\n" + alerts_part}
-            return {"response": "No critical regulatory compliance warnings were triggered for this agreement."}
-            
-        elif any(w in msg for w in ["interest", "rate", "emi", "tenure", "amount", "sanction"]):
-            summary_lines = [line for line in ctx.split("\n") if any(k in line for k in ["Amount", "Interest Rate", "Tenure", "EMI"])]
+    if any(w in msg for w in ["interest", "rate", "emi", "tenure", "amount", "sanction", "principal", "lender", "borrower"]):
+        summary_lines = [line for line in ctx.split("\n") if any(k in line.lower() for k in ["amount", "interest", "rate", "tenure", "emi", "sanction", "principal", "lender", "borrower"])]
+        if summary_lines:
             return {"response": "Here are the primary financial terms from your contract:\n\n" + "\n".join(summary_lines)}
             
-        else:
-            return {"response": f"Here is the verified contract context extracted from your document:\n\n{ctx.strip()}"}
+    for line in ctx.split("\n"):
+        line_clean = line.strip()
+        if line_clean and len(line_clean) > 5 and any(word in line_clean.lower() for word in msg.split() if len(word) > 3 and word in line_clean.lower()):
+            return {"response": f"Document details:\n\n{line_clean}"}
+
+    return {"response": REFUSAL_MSG}
 
 
 # Host React production builds static folder

@@ -1,14 +1,36 @@
+import re
 from typing import Dict, Any, List, Optional
+
+def clean_report_formatting(text: str) -> str:
+    """
+    Cleans report markdown text by removing unnecessary large gaps, excessive blank lines,
+    repeated spaces, and unwanted spacing between paragraphs/sections while preserving
+    original structure and readability.
+    """
+    if not text:
+        return ""
+        
+    lines = []
+    for line in text.splitlines():
+        # Collapse multiple horizontal spaces/tabs into a single space
+        line_clean = re.sub(r'[ \t]+', ' ', line).strip()
+        lines.append(line_clean)
+        
+    joined = "\n".join(lines)
+    # Replace 3 or more consecutive newlines with exactly 2 newlines (clean paragraph breaks)
+    cleaned = re.sub(r'\n{3,}', '\n\n', joined)
+    return cleaned.strip()
 
 def generate_markdown_report(
     metrics: Dict[str, Any],
     charges: List[Dict[str, Any]],
     transparency: Dict[str, Any],
     simulation: Optional[Dict[str, Any]] = None,
-    recommendations: List[str] = []
+    recommendations: List[str] = [],
+    document_text: Optional[str] = None
 ) -> str:
     """
-    Generates a structured educational report for download in markdown format.
+    Generates a cleanly formatted, structured educational report for download in markdown format.
     """
     currency = "₹"
     
@@ -31,12 +53,12 @@ def generate_markdown_report(
     report.append("# DEBT DETOX REPORT")
     report.append("### Know what your debt REALLY costs.")
     report.append("---")
-    report.append("\n**IMPORTANT NOTICE**: This document is for educational purposes only. Debt Detox provides analysis based on the uploaded contract text and mathematical formulas. It should not be treated as professional financial or legal advice. Verify all terms directly with your lender.")
-    report.append("\n## 1. Loan Overview & Calculations")
+    report.append("**IMPORTANT NOTICE**: This document is for educational purposes only. Debt Detox provides analysis based on the uploaded contract text and mathematical formulas. It should not be treated as professional financial or legal advice. Verify all terms directly with your lender.")
+    report.append("## 1. Loan Overview & Calculations")
     
     # Financial Table
-    report.append(f"| Metric | Value | Description |")
-    report.append(f"| :--- | :--- | :--- |")
+    report.append("| Metric | Value | Description |")
+    report.append("| :--- | :--- | :--- |")
     report.append(f"| **Loan Amount (Principal)** | {currency}{p_val:,.2f} | The amount you borrowed |")
     report.append(f"| **Interest Rate** | {r_val}% | Annual interest rate |")
     report.append(f"| **Tenure** | {t_val} months | Total loan duration |")
@@ -51,7 +73,7 @@ def generate_markdown_report(
     # Transparency Score
     score_val = transparency.get('score', 0)
     tb = transparency.get("breakdown", {}) if isinstance(transparency.get("breakdown"), dict) else {}
-    report.append(f"\n## 2. Debt Detox Transparency Score: {score_val}/100")
+    report.append(f"## 2. Debt Detox Transparency Score: {score_val}/100")
     report.append("A custom index assessing the consumer-friendliness of your loan terms:")
     report.append(f"- **Information Completeness**: {tb.get('information_completeness', 0)}/15")
     report.append(f"- **Prepayment Conditions**: {tb.get('prepayment_conditions', 0)}/15")
@@ -61,7 +83,7 @@ def generate_markdown_report(
     report.append(f"- **Additional Charges Score**: {tb.get('additional_charges', 0)}/20")
     
     # Charges Breakdown
-    report.append("\n## 3. Detected Charges List")
+    report.append("## 3. Detected Charges List")
     
     # Standardize output for charges
     report.append("| Charge Name | Rate/Value | Type | Description | Page |")
@@ -81,26 +103,33 @@ def generate_markdown_report(
                 
         classification = c.get("classification", "OTHER")
         evidence = c.get("evidence", "").replace("\n", " ").strip()
+        evidence_clean = re.sub(r'[ \t]+', ' ', evidence)
         page = c.get("page", 1)
         
-        report.append(f"| {c['original_name']} | {val_str} | {classification} | {evidence[:60]}... | Page {page} |")
+        report.append(f"| {c.get('original_name', c.get('canonical_name', 'Charge'))} | {val_str} | {classification} | {evidence_clean[:60]}... | Page {page} |")
         
     # Recommendations
     if recommendations:
-        report.append("\n## 4. Key Actions & Recommendations")
+        report.append("## 4. Key Actions & Recommendations")
         for rec in recommendations:
             report.append(f"- {rec}")
             
     # Payoff Simulation
     if simulation and simulation.get("success"):
-        report.append("\n## 5. Payoff Acceleration Simulation")
+        report.append("## 5. Payoff Acceleration Simulation")
         report.append(f"- **Normal Payoff Timeline**: {simulation['normal_months']} months")
         report.append(f"- **Accelerated Payoff Timeline**: {simulation['accelerated_months']} months")
         report.append(f"- **Timeline Reduction**: **{simulation['months_saved']} months saved**")
         report.append(f"- **Total Interest Saved**: **{currency}{simulation['interest_saved']:,.2f}**")
         report.append(f"- **Accelerated Total Repayment**: {currency}{simulation['accelerated_total_repayment']:,.2f} (vs {currency}{simulation['normal_total_repayment']:,.2f} normal)")
         
-    report.append("\n---")
+    if document_text and document_text.strip():
+        report.append("## 6. Extracted Document Text")
+        report.append(clean_report_formatting(document_text))
+
+    report.append("---")
     report.append("*Report generated by Debt Detox AI. Processed locally.*")
     
-    return "\n".join(report)
+    raw_report = "\n\n".join(report)
+    return clean_report_formatting(raw_report)
+

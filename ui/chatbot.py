@@ -3,7 +3,12 @@ import requests
 from modules.analyzer.compliance import check_regulatory_compliance
 
 def query_ai_chatbot(user_input: str, context_text: str, history: list) -> str:
-    """Tries FastAPI backend first, then direct Ollama LLM, then in-memory financial QA engine."""
+    """Answers strictly using uploaded loan document context. Returns exact refusal message if missing."""
+    REFUSAL_MSG = "This information is not available in the uploaded document"
+
+    if not context_text or "No active document analyzed" in context_text or not context_text.strip():
+        return REFUSAL_MSG
+
     # 1. Try FastAPI endpoint
     try:
         res = requests.post(
@@ -27,62 +32,67 @@ def query_ai_chatbot(user_input: str, context_text: str, history: list) -> str:
         from modules.ai_extraction.client import OllamaClient
         client = OllamaClient()
         system_prompt = (
-            "You are Debt Detox AI, an expert consumer finance advisor chatbot. "
-            "Help users understand their loan terms, manage debt, and analyze agreement details.\n"
+            "You are the Debt Detox AI Loan Assistant. Your ONLY task is to answer user questions using strictly and exclusively the uploaded loan document context provided below.\n\n"
+            "STRICT RULES:\n"
+            "1. Answer ONLY questions directly related to the currently uploaded loan document.\n"
+            "2. Fetch answers strictly and exclusively from the provided document context.\n"
+            "3. If the answer is not present in the uploaded document, clearly say: \"This information is not available in the uploaded document\".\n"
+            "4. Do NOT use general knowledge, assumptions, hallucinations, outside financial advice, or external information under any circumstances.\n\n"
             f"--- CONTRACT CONTEXT ---\n{context_text}\n-----------------------\n"
-            "Use context when relevant. Be clear, direct, and encouraging."
         )
-        prompt = f"User Question: {user_input}\nRespond in JSON: {{\"response\": \"your clear answer\"}}"
+        prompt = f"User Question: {user_input}\nRespond in JSON: {{\"response\": \"your clear answer strictly from context or \\\"This information is not available in the uploaded document\\\"\"}}"
         res = client.generate_json(prompt, system_prompt)
         if isinstance(res, dict) and "response" in res:
-            return res["response"]
+            ans = res["response"].strip()
+            if ans:
+                return ans
     except Exception:
         pass
 
-    # 3. Deterministic In-Memory Consumer Finance QA & Contract Advisor Engine
-    msg = user_input.lower()
+    # 3. Deterministic In-Memory Document QA Engine
+    msg = user_input.lower().strip()
     ctx = context_text or ""
+    ctx_lower = ctx.lower()
 
-    # General loan management guidance
-    if any(w in msg for w in ["manage", "reduce", "payoff", "strategy", "help", "guide", "plan", "how"]):
-        resp = "💡 **Debt Detox Strategic Loan Management Plan:**\n\n"
-        resp += "1. **Accelerate Repayment**: Pay extra towards principal whenever possible to reduce total interest costs over time.\n"
-        resp += "2. **Audit Hidden Fees & Penalties**: Review the **🔎 Verification Evidence** tab for any unverified processing fees, late charges, or foreclosure penalties.\n"
-        resp += "3. **Negotiate Disputed Fees**: Use the **📧 Dispute & Negotiation Letter Generator** to request fee waivers or rate re-examinations from your lender.\n"
-        resp += "4. **Compare Payoff Strategies**: Use the **⚖️ Multi-Debt Strategy** workspace to test Debt Avalanche (highest interest rate first) or Debt Snowball methods.\n"
-        if "Document Name:" in ctx:
-            resp += f"\n\n*Contract Context Loaded*: {ctx.split('Document Name:')[1].splitlines()[0].strip()}"
-        return resp
-
-    if any(w in msg for w in ["fee", "hidden", "insurance", "charge", "cost"]):
-        if "Extracted Charges:" in ctx:
+    if any(w in msg for w in ["fee", "hidden", "charge", "cost"]):
+        if "extracted charges:" in ctx_lower:
             charges_part = ctx.split("Extracted Charges:")[1].split("Regulatory Warnings:")[0].strip()
-            return f"📋 **Charges Extracted From Your Document:**\n\n{charges_part if charges_part else 'No extra hidden fees detected.'}"
-        return "No mandatory insurance or extra hidden fees were found in the extracted agreement summary."
+            if charges_part and charges_part != "None":
+                return f"📋 **Charges Extracted From Your Document:**\n\n{charges_part}"
+        lines = [l for l in ctx.split("\n") if any(k in l.lower() for k in ["fee", "charge", "cost"])]
+        if lines:
+            return "📋 **Fee Details Extracted From Document:**\n\n" + "\n".join(lines)
+
+    if "insurance" in msg:
+        if "insurance" in ctx_lower:
+            lines = [l for l in ctx.split("\n") if "insurance" in l.lower()]
+            if lines:
+                return "📋 **Insurance Details In Document:**\n\n" + "\n".join(lines)
+        return REFUSAL_MSG
 
     if any(w in msg for w in ["penalty", "late", "prepay", "foreclos", "bounce"]):
-        if "Extracted Charges:" in ctx:
-            charges_part = ctx.split("Extracted Charges:")[1].split("Regulatory Warnings:")[0].strip()
-            penalties = [line for line in charges_part.split("\n") if any(p in line.lower() for p in ["penalty", "late", "bounce", "prepay", "foreclos"])]
-            if penalties:
-                return "🚨 **Penalty Clauses Identified:**\n\n" + "\n".join(penalties)
-        return "No explicit penalty or late payment fee was extracted in the key charges summary."
+        lines = [l for l in ctx.split("\n") if any(k in l.lower() for k in ["penalty", "late", "prepay", "foreclos", "bounce"])]
+        if lines:
+            return "🚨 **Penalty Clauses Identified In Document:**\n\n" + "\n".join(lines)
 
     if any(w in msg for w in ["warning", "alert", "compliance", "rbi", "risk"]):
-        if "Regulatory Warnings:" in ctx:
+        if "regulatory warnings:" in ctx_lower:
             alerts_part = ctx.split("Regulatory Warnings:")[1].strip()
             if alerts_part and alerts_part != "None":
-                return "⚠️ **Regulatory Compliance Findings:**\n\n" + alerts_part
-        return "No critical regulatory compliance warnings were triggered for this agreement."
+                return "⚠️ **Regulatory Compliance Findings From Document:**\n\n" + alerts_part
 
-    if any(w in msg for w in ["interest", "rate", "emi", "tenure", "amount", "sanction"]):
-        summary_lines = [line for line in ctx.split("\n") if any(k in line for k in ["Amount", "Interest Rate", "Tenure", "EMI"])]
-        return "📊 **Primary Financial Terms:**\n\n" + "\n".join(summary_lines)
+    if any(w in msg for w in ["interest", "rate", "emi", "tenure", "amount", "sanction", "principal", "lender", "borrower"]):
+        summary_lines = [line for line in ctx.split("\n") if any(k in line.lower() for k in ["amount", "interest", "rate", "tenure", "emi", "sanction", "principal", "lender", "borrower"])]
+        if summary_lines:
+            return "📊 **Primary Financial Terms In Document:**\n\n" + "\n".join(summary_lines)
 
-    if "No active document analyzed" not in ctx and ctx.strip():
-        return f"ℹ️ **Verified Contract Details:**\n\n{ctx.strip()}"
+    # Search for specific phrase match in context
+    for line in ctx.split("\n"):
+        line_clean = line.strip()
+        if line_clean and len(line_clean) > 5 and any(word in line_clean.lower() for word in msg.split() if len(word) > 3 and word in line_clean.lower()):
+            return f"ℹ️ **Document Match:**\n\n{line_clean}"
 
-    return "Hello! I am your AI Loan Assistant. Upload a loan document or ask me how to manage your loans, compare repayment strategies, or negotiate fee waivers."
+    return REFUSAL_MSG
 
 def render_chatbot_page():
     st.markdown(
@@ -90,7 +100,7 @@ def render_chatbot_page():
         <div style="margin-bottom: 25px;">
             <h1 style="margin: 0; background: linear-gradient(135deg, #ffffff 0%, #a5b4fc 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 32px; font-weight: 800; font-family: 'Space Grotesk', sans-serif;">💬 AI Loan Assistant</h1>
             <p style="margin: 5px 0 0 0; color: #94a3b8; font-size: 14px; line-height: 1.6;">
-                Ask specific questions about your agreement clauses, interest calculations, penalties, or compliance alerts.
+                Ask specific questions about your uploaded agreement clauses, interest calculations, penalties, or compliance alerts.
             </p>
         </div>
         """,
@@ -100,7 +110,7 @@ def render_chatbot_page():
     # Initialize message list in session state
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [
-            {"role": "assistant", "content": "Hello! I am your AI Loan Assistant. Ask me any questions about the clauses, terms, or penalties in your uploaded loan agreement."}
+            {"role": "assistant", "content": "Hello! I am your AI Loan Assistant. Ask me any questions directly related to your uploaded loan agreement."}
         ]
 
     # Show messages
@@ -130,6 +140,7 @@ def render_chatbot_page():
         metrics = st.session_state.metrics
         charges = st.session_state.charges or []
         doc_name = st.session_state.doc_name
+        doc_text = st.session_state.get("document_text", st.session_state.get("raw_text", ""))
         
         # Calculate compliance alerts on the fly
         from modules.analyzer.compliance import check_regulatory_compliance
@@ -150,6 +161,9 @@ Extracted Charges:
 
 Regulatory Warnings:
 {alerts_str}
+
+Document Text:
+{doc_text}
 """
 
     # Chat Input bar
@@ -171,4 +185,5 @@ Regulatory Warnings:
             # Append assistant message
             st.session_state.chat_history.append({"role": "assistant", "content": ans})
             st.rerun()
+
 

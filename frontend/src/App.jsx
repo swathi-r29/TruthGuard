@@ -62,6 +62,11 @@ export default function App() {
   const [strategy, setStrategy] = useState('avalanche');
   const [strategyResult, setStrategyResult] = useState(null);
 
+  // Dispute & Negotiation Letter State
+  const [disputeBorrowerName, setDisputeBorrowerName] = useState('John Doe');
+  const [disputeSelectedCharges, setDisputeSelectedCharges] = useState([]);
+  const [disputeCustomNotes, setDisputeCustomNotes] = useState('');
+
   // Fetch backend status on mount
   useEffect(() => {
     fetchHealth();
@@ -110,6 +115,11 @@ export default function App() {
         };
         return next;
       });
+
+      // Prepopulate selected charges for dispute letter
+      if (analysis.charges) {
+        setDisputeSelectedCharges(analysis.charges.map(c => c.canonical_name));
+      }
     }
   }, [analysis]);
 
@@ -160,6 +170,9 @@ ${analysis.charges.map(c => `- ${c.canonical_name}: ${c.value} ${c.unit} (${c.ba
 
 Regulatory Warnings:
 ${analysis.compliance_alerts ? analysis.compliance_alerts.map(a => `- ${a.title}: ${a.description} [Ref: ${a.law_reference}]`).join('\n') : 'None'}
+
+Document Text:
+${analysis.document_text || ''}
 `;
     }
     
@@ -374,6 +387,63 @@ ${analysis.compliance_alerts ? analysis.compliance_alerts.map(a => `- ${a.title}
 
   const updateDebtItem = (id, key, val) => {
     setDebts(prev => prev.map(d => d.id === id ? { ...d, [key]: parseFloat(val) || 0 } : d));
+  };
+
+  const generateDisputeLetterText = () => {
+    if (!analysis) return '';
+    const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const docRef = analysis.doc_name || 'Loan Agreement';
+    const principal = analysis.metrics?.loan_amount || 0;
+    const statedRate = analysis.metrics?.interest_rate_annual || 0;
+    const realApr = analysis.effective_rates?.effective_annual_cost_rate || statedRate;
+    const tenure = analysis.metrics?.tenure_months || 0;
+    const upfrontFees = analysis.metrics?.upfront_fees || 0;
+    const netDisbursed = analysis.metrics?.net_disbursed_amount || principal;
+
+    const selectedList = (analysis.charges || []).filter(c => disputeSelectedCharges.includes(c.canonical_name));
+
+    let letter = `FORMAL REQUEST FOR FEE WAIVER & CONTRACT RE-EXAMINATION\n\nDate: ${dateStr}\nTo: The Loan Operations & Grievance Redressal Officer\nRe: Contract Audit & Dispute Notice — Reference: ${docRef}\nBorrower Name: ${disputeBorrowerName}\n\n--------------------------------------------------------------------------------\n\nDear Sir/Madam,\n\nI am writing to formally request a review and re-examination of specific terms, fee structures, and disclosure conditions contained in my credit agreement (${docRef}).\n\nAn independent financial audit of the contract terms reveals significant divergences between advertised loan costs and total effective debt obligations:\n\nSUMMARY OF AUDIT FINDINGS:\n--------------------------\n1. Sanctioned Principal Amount: ₹${principal.toLocaleString('en-IN')}\n2. Stated Annual Interest Rate: ${statedRate}% p.a.\n3. Effective Annual Rate (Real APR): ${realApr.toFixed(2)}% p.a. (Hidden APR Markup: +${(realApr - statedRate).toFixed(2)}%)\n4. Upfront Deductions & Fees: ₹${upfrontFees.toLocaleString('en-IN')} (Net Disbursement: ₹${netDisbursed.toLocaleString('en-IN')})\n5. Repayment Tenure: ${tenure} Months\n\nSPECIFIC CLAUSES UNDER DISPUTE / REQUEST FOR WAIVER:\n---------------------------------------------------\n`;
+
+    if (selectedList.length === 0) {
+      letter += `• Upfront Fee Structure: General request to review processing and administrative deductions.\n`;
+    } else {
+      selectedList.forEach((charge, idx) => {
+        const name = charge.original_name || charge.canonical_name.replace(/_/g, ' ');
+        const val = charge.value;
+        const unit = charge.unit;
+        let val_str = 'Not Specified';
+        if (val !== null && val !== undefined) {
+          if (unit === 'percent') val_str = `${val}%`;
+          else if (unit === 'INR') val_str = `₹${val.toLocaleString('en-IN')}`;
+          else val_str = `${val} ${unit}`;
+        }
+        letter += `${idx + 1}. Clause / Charge: ${name} (${val_str})\n   - Basis: ${(charge.basis || '').replace(/_/g, ' ')}\n   - Contract Evidence (Page ${charge.page || 1}): "${charge.evidence || ''}"\n`;
+        if (charge.canonical_name.includes('foreclosure') || charge.canonical_name.includes('prepayment')) {
+          letter += `   - Ground for Waiver: Central bank consumer guidelines prohibit foreclosure penalties on floating-rate individual retail credit.\n`;
+        } else if (charge.canonical_name.includes('processing')) {
+          letter += `   - Ground for Waiver: Upfront processing fee exceeds standard benchmarks and reduces net disbursement cash in hand.\n`;
+        } else if (charge.canonical_name.includes('bounce') || charge.canonical_name.includes('late')) {
+          letter += `   - Ground for Waiver: Penal default charges must be reasonable and strictly cost-reflective rather than punitive.\n`;
+        }
+        letter += `\n`;
+      });
+    }
+
+    if (analysis.compliance_alerts && analysis.compliance_alerts.length > 0) {
+      letter += `REGULATORY & FAIR PRACTICE CONCERNS:\n------------------------------------\n`;
+      analysis.compliance_alerts.forEach(alert => {
+        letter += `• [${alert.severity || 'WARNING'}] ${alert.title}: ${alert.description}\n  Reference Standard: ${alert.law_reference || ''}\n`;
+      });
+      letter += `\n`;
+    }
+
+    if (disputeCustomNotes.trim()) {
+      letter += `ADDITIONAL BORROWER STATEMENT:\n------------------------------\n${disputeCustomNotes.trim()}\n\n`;
+    }
+
+    letter += `FORMAL RELIEF REQUESTED:\n------------------------\nIn light of the above findings, I respectfully request that your institution:\n1. Waive or reduce the disputed upfront and penalty fees listed above prior to final settlement.\n2. Provide a clear, written APR disclosure breakdown confirming the net effective interest rate.\n3. Confirm in writing that no un-disclosed post-disbursement fees will be levied.\n\nI look forward to your prompt response and written confirmation within 7 working days.\n\nSincerely,\n\n_______________________________\n${disputeBorrowerName}\nContact Reference: ${docRef}\nAudit Verification Code: DEBT-DETOX-AUDIT\n`;
+
+    return letter;
   };
 
   // Transparency Score verdict helper
@@ -654,6 +724,9 @@ ${analysis.compliance_alerts ? analysis.compliance_alerts.map(a => `- ${a.title}
           </button>
           <button className={`menu-item ${activeTab === 'evidence' ? 'active' : ''}`} onClick={() => setActiveTab('evidence')}>
             <span>🔎</span> Verification Evidence
+          </button>
+          <button className={`menu-item ${activeTab === 'dispute' ? 'active' : ''}`} onClick={() => setActiveTab('dispute')}>
+            <span>📧</span> Dispute & Negotiation
           </button>
           <button className={`menu-item ${activeTab === 'report' ? 'active' : ''}`} onClick={() => setActiveTab('report')}>
             <span>📋</span> printable Report
@@ -1835,6 +1908,131 @@ ${analysis.compliance_alerts ? analysis.compliance_alerts.map(a => `- ${a.title}
                     })}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 7: DISPUTE & NEGOTIATION LETTER */}
+        {activeTab === 'dispute' && (
+          <div>
+            <header className="page-header">
+              <h1 className="page-title">📧 Dispute & Negotiation Letter Generator</h1>
+              <p className="page-description">
+                Generate an automated, legally-grounded fee waiver & contract renegotiation letter based on extracted loan terms and compliance findings.
+              </p>
+            </header>
+
+            {!analysis ? (
+              <div className="premium-card glow-border-amber">
+                <h4 style={{ color: '#f59e0b', marginBottom: 8 }}>⚠️ No Active Audit Found</h4>
+                <p style={{ color: '#cbd5e1', fontSize: 13 }}>Please upload an agreement on the <b>Upload & Analyze</b> tab.</p>
+              </div>
+            ) : (
+              <div className="grid-2" style={{ gridTemplateColumns: '1fr 1.2fr', gap: 20 }}>
+                {/* Column 1: Config */}
+                <div className="premium-card glow-border-indigo" style={{ padding: 20 }}>
+                  <h3 style={{ fontSize: 16, color: '#38bdf8', marginBottom: 15 }}>1. Customize Letter Parameters</h3>
+                  
+                  <div className="form-group">
+                    <label>Borrower Full Name:</label>
+                    <input 
+                      type="text" 
+                      value={disputeBorrowerName} 
+                      onChange={(e) => setDisputeBorrowerName(e.target.value)} 
+                    />
+                  </div>
+
+                  <div style={{ marginTop: 15, fontWeight: 600, color: '#cbd5e1', fontSize: 13, marginBottom: 10 }}>
+                    Select Disputed Charges to Include:
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto', paddingRight: 5 }}>
+                    {(analysis.charges || []).map((c, idx) => {
+                      const canon = c.canonical_name;
+                      const isChecked = disputeSelectedCharges.includes(canon);
+                      const val = c.value;
+                      const unit = c.unit;
+                      let val_str = 'Not Specified';
+                      if (val !== null && val !== undefined) {
+                        if (unit === 'percent') val_str = `${val}%`;
+                        else if (unit === 'INR') val_str = `₹${val.toLocaleString('en-IN')}`;
+                        else val_str = `${val} ${unit}`;
+                      }
+
+                      return (
+                        <label key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#cbd5e1', cursor: 'pointer' }}>
+                          <input 
+                            type="checkbox" 
+                            checked={isChecked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setDisputeSelectedCharges(prev => [...prev, canon]);
+                              } else {
+                                setDisputeSelectedCharges(prev => prev.filter(x => x !== canon));
+                              }
+                            }}
+                          />
+                          <span>{c.original_name || canon.replace(/_/g, ' ')} <b style={{ color: '#38bdf8' }}>({val_str})</b></span>
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  <div className="form-group" style={{ marginTop: 15 }}>
+                    <label>Additional Notes / Specific Requests:</label>
+                    <textarea 
+                      rows="3"
+                      placeholder="e.g., I have maintained a salary account with your bank for 5 years and request an executive relationship waiver."
+                      value={disputeCustomNotes}
+                      onChange={(e) => setDisputeCustomNotes(e.target.value)}
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)', color: '#ffffff', fontSize: 12 }}
+                    />
+                  </div>
+                </div>
+
+                {/* Column 2: Live Notice Preview */}
+                <div>
+                  <h3 style={{ fontSize: 16, color: '#10b981', marginBottom: 15 }}>2. Generated Formal Notice Preview</h3>
+                  
+                  <div style={{
+                    background: '#07111F',
+                    border: '1px solid rgba(56, 189, 248, 0.3)',
+                    borderRadius: 12,
+                    padding: 20,
+                    maxHeight: 460,
+                    overflowY: 'auto',
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    lineHeight: 1.6,
+                    color: '#F8FAFC',
+                    whiteSpace: 'pre-wrap',
+                    marginBottom: 15,
+                    boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)'
+                  }}>
+                    {generateDisputeLetterText()}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <button 
+                      className="btn"
+                      onClick={() => {
+                        const element = document.createElement("a");
+                        const file = new Blob([generateDisputeLetterText()], { type: 'text/plain' });
+                        element.href = URL.createObjectURL(file);
+                        element.download = `Dispute_Notice_${(analysis.doc_name || 'Loan').replace(/\s+/g, '_')}.txt`;
+                        document.body.appendChild(element);
+                        element.click();
+                        document.body.removeChild(element);
+                      }}
+                    >
+                      📥 Download Notice (.txt)
+                    </button>
+                    <span style={{ fontSize: 11, color: '#94a3b8' }}>
+                      💡 Copy the notice text above and submit via registered email to your lender's grievance desk.
+                    </span>
+                  </div>
+                </div>
               </div>
             )}
           </div>
