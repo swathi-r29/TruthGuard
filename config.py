@@ -7,21 +7,32 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 
+def get_config_val(key: str, default: str = "") -> str:
+    val = os.getenv(key, "")
+    if not val:
+        try:
+            import streamlit as st
+            if hasattr(st, "secrets") and key in st.secrets:
+                val = st.secrets[key]
+        except Exception:
+            pass
+    return val if val else default
+
 # LLM Configuration
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma2:2b")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+LLM_PROVIDER = get_config_val("LLM_PROVIDER", "gemini").lower()
+OLLAMA_MODEL = get_config_val("OLLAMA_MODEL", "gemma2:2b")
+OLLAMA_BASE_URL = get_config_val("OLLAMA_BASE_URL", "http://localhost:11434")
+GEMINI_API_KEY = get_config_val("GEMINI_API_KEY", "")
+GEMINI_MODEL = get_config_val("GEMINI_MODEL", "gemini-1.5-flash")
 
 # OCR Configuration
-TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
+TESSERACT_CMD = get_config_val("TESSERACT_CMD", "")
 
 # UI Settings
-CURRENCY_SYMBOL = os.getenv("CURRENCY_SYMBOL", "₹")
+CURRENCY_SYMBOL = get_config_val("CURRENCY_SYMBOL", "₹")
 
 # Debugging
-DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+DEBUG = get_config_val("DEBUG", "false").lower() == "true"
 
 # Paths
 UPLOADS_DIR = BASE_DIR / "uploads"
