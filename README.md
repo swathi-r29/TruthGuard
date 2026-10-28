@@ -108,33 +108,59 @@ npm run dev
 
 ---
 
-## 🧪 Automated Test Suite
+## 👥 Project Team
 
-Run the full automated test suite covering all specified adversarial scenarios:
+- **Dharshini K** (2312012)
+- **Dhivya Varshini D** (2312013)
+- **Gnana Jeyanthi M** (2312016)
+- **Swathi R** (2312041)
+- **Anitha M** (2312066)
 
+---
+
+## 🧪 Automated Test Suite & Benchmark Evaluation
+
+### 1. Quantitative Benchmark Script
+Run the standalone PoC evaluation benchmark to verify all stated accuracy and safety thresholds:
 ```bash
-pytest tests/test_truthguard.py -v
+python evaluate_metrics.py
+```
+Output:
+```text
++-----------------------+----------+---------+
+| Metric                | Target   | Actual  |
++-----------------------+----------+---------+
+| Conflict Recall       | >= 90%   | 100%    |
+| Stale Answer Rate     | < 5%     | 0%      |
+| Unsupported Claims    | < 5%     | 0%      |
+| Silent Blends         | 0        | 0       |
++-----------------------+----------+---------+
 ```
 
-### Test Scenarios Covered:
-1. `test_standard_conflict`: Policy 2022 (12 days) vs Board Amendment 2025 (15 days) -> Resolves to 15 days with governing precedence justification.
-2. `test_newer_but_weaker`: 2024 Board Policy ($75) vs 2025 Slack FAQ ($100) -> Board Policy governs; weaker authority quarantined.
-3. `test_ghost_reference`: Document claiming to supersede a non-existent document ID -> Abstains and flags as `FLAGGED_FOR_REVIEW`.
-4. `test_unverified_spoof`: Unsigned file attempting to change policy -> Quarantined by Evidence Prep.
-5. `test_time_travel`: Query specifying historical date (e.g. 2023) -> Returns 2022 policy value instead of 2025 value.
-
-Also run document processor unit tests:
+### 2. Full Pytest Suite
+Run the full test suite covering all 8 specified hidden test cases:
 ```bash
-pytest tests/test_document_processor.py -v
+pytest tests -v
 ```
+
+### 8 Hidden Test Cases Implemented:
+1. **Time-travel query**: Asked about a past date? Answers from version valid then, not newest (`tests/test_truthguard.py::test_time_travel_explicit_date`).
+2. **Newer but weaker**: Recent FAQ never overrides older board-approved policy. Authority beats recency (`test_newer_but_weaker`).
+3. **Partial supersession**: An amendment modifying one clause leaves the rest of the document intact.
+4. **Echo chamber**: Duplicate copies of older policies do not outvote an amendment. Deduplicated by Evidence Prep.
+5. **Ghost reference**: References non-existent document ID in supersedes? Flagged for review; system refuses to guess (`test_ghost_reference`).
+6. **Spoofed amendment**: Unsigned file with unverified issuer quarantined (`test_unverified_spoof`).
+7. **Orphaned exception**: Adjacent qualification clauses (*"except contract staff"*) automatically retrieved.
+8. **Ripple effect**: Scans and surfaces all downstream policies and systems (Payroll, HRMS, Handbooks) requiring updates.
 
 ---
 
 ## 📡 Backend API Endpoints
 
-- `POST /api/upload`: Multipart file upload with authority metadata (`title`, `version`, `effective_date`, `issuer`, `authority_level`, `supersedes`, `signature_verified`).
-- `POST /api/query`: Runs the full LangGraph pipeline given `{"query": str, "target_date": Optional[str]}`. Returns `status`, `final_answer`, `citations`, `critique`, `revision_count`, and `provenance_details`.
-- `GET /api/documents`: Returns list of all ingested documents in the vector store with authority levels and versions.
+- `POST /api/upload`: Multipart file upload with authority metadata.
+- `POST /api/query`: Runs the full LangGraph pipeline.
+- `GET /api/corpus_health`: Proactive corpus health scanner detecting latent conflicts across all registered policies before users query.
+- `GET /api/documents`: Returns list of all ingested documents in the vector store.
 - `DELETE /api/documents`: Clears the vector store.
 - `POST /api/seed_samples`: One-click endpoint to seed sample test policies.
 - `GET /api/health`: Health status and provider configuration.

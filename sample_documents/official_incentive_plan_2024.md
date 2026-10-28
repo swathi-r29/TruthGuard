@@ -7,3 +7,4 @@
 
 ## Section 2: Performance Bonuses
 Standard annual performance bonus target is 10 percent of base salary for all eligible software engineers, subject to formal executive review.
+

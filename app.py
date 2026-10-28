@@ -194,6 +194,52 @@ def query_truthguard(request: QueryRequest):
         logger.error(f"Query pipeline error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Pipeline error: {str(e)}")
 
+@app.get("/api/corpus_health")
+def scan_corpus_health():
+    """
+    Corpus Health Scanner: Proactively audits all ingested documents to find latent
+    policy conflicts, ghost references, and staleness before any user asks a question.
+    """
+    from modules.agents.critic_node import _audit_passages_adversarially
+    all_passages = vector_store.get_all_passages()
+    all_docs = vector_store.get_all_documents()
+
+    if not all_passages:
+        return {
+            "status": "HEALTHY",
+            "health_score": 100,
+            "total_documents": 0,
+            "total_chunks": 0,
+            "conflicts_count": 0,
+            "staleness_count": 0,
+            "ghost_references_count": 0,
+            "contradictions": [],
+            "staleness": [],
+            "ghost_references": []
+        }
+
+    (has_contra, contra_details,
+     has_stale, stale_details,
+     has_ghost, ghost_details) = _audit_passages_adversarially(all_passages)
+
+    total_issues = len(contra_details) + len(stale_details) + len(ghost_details)
+    health_score = max(0, 100 - (total_issues * 10))
+
+    status = "HEALTHY" if total_issues == 0 else "WARNING" if total_issues <= 3 else "ACTION_REQUIRED"
+
+    return {
+        "status": status,
+        "health_score": health_score,
+        "total_documents": len(all_docs),
+        "total_chunks": len(all_passages),
+        "conflicts_count": len(contra_details),
+        "staleness_count": len(stale_details),
+        "ghost_references_count": len(ghost_details),
+        "contradictions": contra_details,
+        "staleness": stale_details,
+        "ghost_references": ghost_details
+    }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)

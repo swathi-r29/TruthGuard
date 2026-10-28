@@ -190,6 +190,29 @@ export default function App() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadFile, setUploadFile] = useState(null);
+
+  // Corpus Health Scanner
+  const [corpusHealth, setCorpusHealth] = useState(null);
+  const [showHealthModal, setShowHealthModal] = useState(false);
+  const [healthLoading, setHealthLoading] = useState(false);
+
+  const handleScanHealth = async () => {
+    setHealthLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/corpus_health`);
+      if (res.ok) {
+        const data = await res.json();
+        setCorpusHealth(data);
+        setShowHealthModal(true);
+      } else {
+        alert('Failed to scan corpus health.');
+      }
+    } catch (e) {
+      alert(`Corpus scan failed: ${e.message}`);
+    } finally {
+      setHealthLoading(false);
+    }
+  };
   const [uploadForm, setUploadForm] = useState({
     doc_id: '',
     title: '',
@@ -454,6 +477,26 @@ export default function App() {
           }}>
             LLM: <strong style={{ color: '#38BDF8' }}>{health.provider.toUpperCase()}</strong> | Docs: <strong style={{ color: '#10B981' }}>{documents.length}</strong>
           </div>
+
+          <button
+            onClick={handleScanHealth}
+            disabled={healthLoading}
+            style={{
+              background: 'rgba(16, 185, 129, 0.1)',
+              border: '1px solid rgba(16, 185, 129, 0.35)',
+              color: '#10B981',
+              borderRadius: '8px',
+              padding: '8px 14px',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: healthLoading ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            🩺 {healthLoading ? 'Scanning Corpus...' : 'Scan Corpus Health'}
+          </button>
 
           <button
             onClick={handleSeedSamples}
@@ -1227,6 +1270,126 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Corpus Health Scanner Modal */}
+      {showHealthModal && corpusHealth && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.78)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100,
+          padding: '20px'
+        }}>
+          <div style={{
+            background: '#0F1E33',
+            border: '1px solid rgba(16, 185, 129, 0.35)',
+            borderRadius: '16px',
+            width: '100%',
+            maxWidth: '640px',
+            padding: '28px',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.6)',
+            maxHeight: '85vh',
+            overflowY: 'auto'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid rgba(148, 163, 184, 0.15)', paddingBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '24px' }}>🩺</span>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#F8FAFC' }}>
+                    Corpus Health Audit Report
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '11px', color: '#94A3B8' }}>
+                    Proactive conflict detection across all {corpusHealth.total_documents} documents ({corpusHealth.total_chunks} chunks)
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowHealthModal(false)}
+                style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '20px', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Health Score Overview */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '18px' }}>
+              <div style={{ background: 'rgba(7, 17, 31, 0.7)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(148, 163, 184, 0.15)', textAlign: 'center' }}>
+                <span style={{ fontSize: '10px', textTransform: 'uppercase', color: '#94A3B8', fontWeight: 700 }}>Health Score</span>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: corpusHealth.health_score > 80 ? '#10B981' : '#F59E0B', marginTop: '4px' }}>
+                  {corpusHealth.health_score}%
+                </div>
+              </div>
+              <div style={{ background: 'rgba(7, 17, 31, 0.7)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(148, 163, 184, 0.15)', textAlign: 'center' }}>
+                <span style={{ fontSize: '10px', textTransform: 'uppercase', color: '#94A3B8', fontWeight: 700 }}>Conflicts</span>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: corpusHealth.conflicts_count > 0 ? '#EF4444' : '#10B981', marginTop: '4px' }}>
+                  {corpusHealth.conflicts_count}
+                </div>
+              </div>
+              <div style={{ background: 'rgba(7, 17, 31, 0.7)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(148, 163, 184, 0.15)', textAlign: 'center' }}>
+                <span style={{ fontSize: '10px', textTransform: 'uppercase', color: '#94A3B8', fontWeight: 700 }}>Stale Policies</span>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: corpusHealth.staleness_count > 0 ? '#F59E0B' : '#10B981', marginTop: '4px' }}>
+                  {corpusHealth.staleness_count}
+                </div>
+              </div>
+              <div style={{ background: 'rgba(7, 17, 31, 0.7)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(148, 163, 184, 0.15)', textAlign: 'center' }}>
+                <span style={{ fontSize: '10px', textTransform: 'uppercase', color: '#94A3B8', fontWeight: 700 }}>Ghost Refs</span>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: corpusHealth.ghost_references_count > 0 ? '#EF4444' : '#10B981', marginTop: '4px' }}>
+                  {corpusHealth.ghost_references_count}
+                </div>
+              </div>
+            </div>
+
+            {/* Findings Lists */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {corpusHealth.contradictions?.length > 0 && (
+                <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', padding: '12px' }}>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#FCA5A5', textTransform: 'uppercase' }}>
+                    🚨 Latent Factual Contradictions Detected in Document Corpus:
+                  </h4>
+                  <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', color: '#FEE2E2', lineHeight: 1.5 }}>
+                    {corpusHealth.contradictions.map((c, i) => <li key={i}>{c}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {corpusHealth.ghost_references?.length > 0 && (
+                <div style={{ background: 'rgba(168, 85, 247, 0.08)', border: '1px solid rgba(168, 85, 247, 0.3)', borderRadius: '8px', padding: '12px' }}>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#D8B4FE', textTransform: 'uppercase' }}>
+                    👻 Unverified Ghost References in Supersedes Metadata:
+                  </h4>
+                  <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', color: '#F3E8FF', lineHeight: 1.5 }}>
+                    {corpusHealth.ghost_references.map((g, i) => <li key={i}>{g}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {corpusHealth.staleness?.length > 0 && (
+                <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '8px', padding: '12px' }}>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#FCD34D', textTransform: 'uppercase' }}>
+                    ⏳ Superseded / Stale Policies in Corpus:
+                  </h4>
+                  <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', color: '#FEF3C7', lineHeight: 1.5 }}>
+                    {corpusHealth.staleness.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button
+                onClick={() => setShowHealthModal(false)}
+                style={{ background: 'rgba(255, 255, 255, 0.1)', border: '1px solid rgba(148, 163, 184, 0.3)', color: '#fff', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+              >
+                Close Audit
+              </button>
+            </div>
           </div>
         </div>
       )}

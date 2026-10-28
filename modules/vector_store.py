@@ -224,6 +224,42 @@ class TruthGuardVectorStore:
 
         return passages
 
+    def get_all_passages(self) -> List[PassageChunk]:
+        """Returns all chunks across all documents in the collection for corpus-wide audits."""
+        total = self.collection.count()
+        if total == 0:
+            return []
+        data = self.collection.get(include=["documents", "metadatas"])
+        passages: List[PassageChunk] = []
+        if not data or not data.get("ids"):
+            return passages
+        for idx, chunk_id in enumerate(data["ids"]):
+            doc_text = data["documents"][idx]
+            meta_dict = data["metadatas"][idx]
+            supersedes_list = []
+            try:
+                supersedes_list = json.loads(meta_dict.get("supersedes", "[]"))
+            except Exception:
+                pass
+            doc_meta = DocumentMetadata(
+                doc_id=meta_dict.get("doc_id", "unknown"),
+                title=meta_dict.get("title", "Untitled"),
+                version=meta_dict.get("version", "1.0"),
+                effective_date=meta_dict.get("effective_date", "2024-01-01"),
+                issuer=meta_dict.get("issuer", "Unknown"),
+                authority_level=int(meta_dict.get("authority_level", 1)),
+                supersedes=supersedes_list,
+                signature_verified=bool(meta_dict.get("signature_verified", True))
+            )
+            passages.append(PassageChunk(
+                chunk_id=chunk_id,
+                doc_id=doc_meta.doc_id,
+                content=doc_text,
+                surrounding_context=meta_dict.get("surrounding_context"),
+                metadata=doc_meta
+            ))
+        return passages
+
     def get_all_documents(self) -> List[DocumentMetadata]:
         return list(self._documents.values())
 
