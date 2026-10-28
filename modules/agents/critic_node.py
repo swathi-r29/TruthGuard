@@ -33,6 +33,23 @@ NON_UNITS = {
     "ver", "version", "date", "level", "regular", "calendar", "all", "full", "time"
 }
 
+GENERIC_POLICY_STOPWORDS = {
+    "what", "is", "the", "in", "on", "at", "for", "a", "an", "and", "or", "of", "to",
+    "how", "many", "was", "are", "be", "per", "by", "as", "all", "it", "this", "that",
+    "with", "from", "policy", "circular", "document", "ver", "version", "date",
+    "effective", "issuer", "level", "authority", "executive", "board", "operations",
+    "status", "statu", "signed", "verified", "section", "clause", "standard", "employee",
+    "employees", "approved", "formal", "prior", "upon", "hereby", "requirements",
+    "guidelines", "handbook", "sop", "team", "internal", "lead", "actor", "plan",
+    "directives", "general", "corporate", "office", "work", "monthly", "annual",
+    "calendar", "day", "days", "year", "years", "month", "months", "dollar", "dollars",
+    "percent", "percentage", "rate", "allowance", "target", "entitlement", "rule",
+    "rules", "subject", "review", "resolves", "regular", "basis", "full-time", "part-time",
+    "supersede", "supersedes", "amendment", "amendments", "exce", "excess", "require",
+    "requires", "approval", "written", "strictly", "capped", "explicitly", "thi", "any",
+    "verbal", "eligible", "discretionary"
+}
+
 def _canonicalize_unit(u: str) -> str:
     u = u.lower().rstrip("s")
     if u in ["dollar", "$", "usd"]:
@@ -64,10 +81,11 @@ def _extract_numbers_and_units(text: str) -> List[Tuple[str, str]]:
 def _audit_passages_adversarially(passages: List[PassageChunk], target_date: str = None) -> Tuple[bool, List[str], bool, List[str], bool, List[str]]:
     """
     Algorithmic adversarial verifier that guarantees rigorous checks on:
-    - Factual contradictions across different documents
+    - Factual contradictions across different documents (deduplicated at document-pair level)
     - Authority hierarchy & precedence
     - Supersedes links & Ghost reference detection
     - Temporal validity / Time-travel
+    Prevents cross-domain false conflicts (e.g. travel expense vs remote equipment stipend).
     """
     has_contradiction = False
     contradiction_details = []
@@ -75,6 +93,9 @@ def _audit_passages_adversarially(passages: List[PassageChunk], target_date: str
     staleness_details = []
     has_ghost = False
     ghost_details = []
+
+    seen_conflict_pairs = set()
+    seen_stale_pairs = set()
 
     # Group passages by doc_id
     docs_by_id = {}
@@ -95,8 +116,9 @@ def _audit_passages_adversarially(passages: List[PassageChunk], target_date: str
                         f"Ghost Reference detected in '{meta.title}' (ID: {doc_id}): "
                         f"claims to supersede non-existent document ID '{sup_target}'."
                     )
-                    ghost_details.append(detail)
-                    contradiction_details.append(detail)
+                    if detail not in ghost_details:
+                        ghost_details.append(detail)
+                        contradiction_details.append(detail)
 
     # Check for Contradictions across documents
     doc_ids = list(docs_by_id.keys())
@@ -104,69 +126,80 @@ def _audit_passages_adversarially(passages: List[PassageChunk], target_date: str
         for j in range(i + 1, len(doc_ids)):
             id1, id2 = doc_ids[i], doc_ids[j]
             meta1, meta2 = docs_by_id[id1], docs_by_id[id2]
+            pair_key = tuple(sorted([id1, id2]))
 
             chunks1 = [p.content for p in passages if p.doc_id == id1]
             chunks2 = [p.content for p in passages if p.doc_id == id2]
             text1 = " ".join(chunks1)
             text2 = " ".join(chunks2)
 
-            # Check if text1 and text2 discuss the same subject or have an explicit supersession link
-            stop_topics = {"what", "is", "the", "in", "on", "at", "for", "a", "an", "and", "or", "of", "to", "how", "many", "was", "are", "be", "per", "by", "as", "all", "it", "this", "that", "with", "from"}
-            topics1 = {w.lower().rstrip("s.,;:!?") for w in text1.split() if w.lower().rstrip("s.,;:!?") not in stop_topics and len(w) > 2}
-            topics2 = {w.lower().rstrip("s.,;:!?") for w in text2.split() if w.lower().rstrip("s.,;:!?") not in stop_topics and len(w) > 2}
-            is_same_topic = bool(topics1.intersection(topics2)) or (id1 in (meta2.supersedes or [])) or (id2 in (meta1.supersedes or []))
+            # Check if text1 and text2 discuss the same domain topic or have an explicit supersession link.
+            # Strip markdown formatting and generic corporate stopwords to prevent cross-domain collisions (e.g. Travel vs Remote Work).
+            topics1 = {re.sub(r'[^a-zA-Z]', '', w.lower()).rstrip('s') for w in text1.split()}
+            topics1 = {w for w in topics1 if w and w not in GENERIC_POLICY_STOPWORDS and len(w) > 2}
+            topics2 = {re.sub(r'[^a-zA-Z]', '', w.lower()).rstrip('s') for w in text2.split()}
+            topics2 = {w for w in topics2 if w and w not in GENERIC_POLICY_STOPWORDS and len(w) > 2}
+            
+            has_supersedes_link = (id1 in (meta2.supersedes or [])) or (id2 in (meta1.supersedes or []))
+            has_shared_domain_topic = bool(topics1.intersection(topics2))
+            is_same_topic = has_supersedes_link or has_shared_domain_topic
 
             if not is_same_topic:
                 continue
 
-            nums1 = _extract_numbers_and_units(text1)
-            nums2 = _extract_numbers_and_units(text2)
+            # Deduplicate numbers within each document to prevent repeat comparisons
+            nums1 = list(dict.fromkeys(_extract_numbers_and_units(text1)))
+            nums2 = list(dict.fromkeys(_extract_numbers_and_units(text2)))
 
             for val1, unit1 in nums1:
                 for val2, unit2 in nums2:
                     if unit1.lower() == unit2.lower() and val1 != val2:
-                        has_contradiction = True
-                        c_msg = (
-                            f"Factual conflict on '{unit1}': '{meta1.title}' (Ver {meta1.version}, Date {meta1.effective_date}) "
-                            f"states {val1} {unit1}, whereas '{meta2.title}' (Ver {meta2.version}, Date {meta2.effective_date}) "
-                            f"states {val2} {unit2}."
-                        )
-                        contradiction_details.append(c_msg)
+                        conflict_key = pair_key + (unit1.lower(),)
+                        if conflict_key not in seen_conflict_pairs:
+                            seen_conflict_pairs.add(conflict_key)
+                            has_contradiction = True
+                            c_msg = (
+                                f"Factual conflict on '{unit1}': '{meta1.title}' (Ver {meta1.version}, Date {meta1.effective_date}) "
+                                f"states {val1} {unit1}, whereas '{meta2.title}' (Ver {meta2.version}, Date {meta2.effective_date}) "
+                                f"states {val2} {unit2}."
+                            )
+                            contradiction_details.append(c_msg)
 
-                        # Check staleness and precedence
-                        # 1. Authority precedence
-                        if meta1.authority_level > meta2.authority_level:
-                            staleness_details.append(
-                                f"'{meta2.title}' (Authority {meta2.authority_level}) is overridden by higher authority '{meta1.title}' (Authority {meta1.authority_level})."
-                            )
-                            has_staleness = True
-                        elif meta2.authority_level > meta1.authority_level:
-                            staleness_details.append(
-                                f"'{meta1.title}' (Authority {meta1.authority_level}) is overridden by higher authority '{meta2.title}' (Authority {meta2.authority_level})."
-                            )
-                            has_staleness = True
-                        else:
-                            # 2. Equal authority: check supersedes or date
-                            if meta2.doc_id in (meta1.supersedes or []):
-                                staleness_details.append(
-                                    f"'{meta1.title}' explicitly supersedes '{meta2.title}'."
-                                )
-                                has_staleness = True
-                            elif meta1.doc_id in (meta2.supersedes or []):
-                                staleness_details.append(
-                                    f"'{meta2.title}' explicitly supersedes '{meta1.title}'."
-                                )
-                                has_staleness = True
-                            elif meta1.effective_date > meta2.effective_date:
-                                staleness_details.append(
-                                    f"'{meta2.title}' ({meta2.effective_date}) is older than '{meta1.title}' ({meta1.effective_date}) at equal authority."
-                                )
-                                has_staleness = True
-                            elif meta2.effective_date > meta1.effective_date:
-                                staleness_details.append(
-                                    f"'{meta1.title}' ({meta1.effective_date}) is older than '{meta2.title}' ({meta2.effective_date}) at equal authority."
-                                )
-                                has_staleness = True
+                            # Check staleness and precedence for this document pair (recorded once per pair)
+                            if pair_key not in seen_stale_pairs:
+                                seen_stale_pairs.add(pair_key)
+                                if meta1.authority_level > meta2.authority_level:
+                                    staleness_details.append(
+                                        f"'{meta2.title}' (Authority {meta2.authority_level}) is overridden by higher authority '{meta1.title}' (Authority {meta1.authority_level})."
+                                    )
+                                    has_staleness = True
+                                elif meta2.authority_level > meta1.authority_level:
+                                    staleness_details.append(
+                                        f"'{meta1.title}' (Authority {meta1.authority_level}) is overridden by higher authority '{meta2.title}' (Authority {meta2.authority_level})."
+                                    )
+                                    has_staleness = True
+                                else:
+                                    # Equal authority: check supersedes or date
+                                    if meta2.doc_id in (meta1.supersedes or []):
+                                        staleness_details.append(
+                                            f"'{meta1.title}' explicitly supersedes '{meta2.title}'."
+                                        )
+                                        has_staleness = True
+                                    elif meta1.doc_id in (meta2.supersedes or []):
+                                        staleness_details.append(
+                                            f"'{meta2.title}' explicitly supersedes '{meta1.title}'."
+                                        )
+                                        has_staleness = True
+                                    elif meta1.effective_date > meta2.effective_date:
+                                        staleness_details.append(
+                                            f"'{meta2.title}' ({meta2.effective_date}) is older than '{meta1.title}' ({meta1.effective_date}) at equal authority."
+                                        )
+                                        has_staleness = True
+                                    elif meta2.effective_date > meta1.effective_date:
+                                        staleness_details.append(
+                                            f"'{meta1.title}' ({meta1.effective_date}) is older than '{meta2.title}' ({meta2.effective_date}) at equal authority."
+                                        )
+                                        has_staleness = True
 
     # Check time-travel query validity
     if target_date:

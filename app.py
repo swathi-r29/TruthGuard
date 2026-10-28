@@ -222,22 +222,28 @@ def scan_corpus_health():
      has_stale, stale_details,
      has_ghost, ghost_details) = _audit_passages_adversarially(all_passages)
 
-    total_issues = len(contra_details) + len(stale_details) + len(ghost_details)
-    health_score = max(0, 100 - (total_issues * 10))
+    # Clean deduplication: ensure each finding is reported exactly once
+    unique_contra = list(dict.fromkeys(contra_details))
+    unique_stale = list(dict.fromkeys(stale_details))
+    unique_ghost = list(dict.fromkeys(ghost_details))
 
-    status = "HEALTHY" if total_issues == 0 else "WARNING" if total_issues <= 3 else "ACTION_REQUIRED"
+    total_issues = len(unique_contra) + len(unique_stale) + len(unique_ghost)
+    # Calibrated health score: 100 base, deducted per distinct issue
+    health_score = max(0, 100 - (total_issues * 15))
+
+    status = "HEALTHY" if total_issues == 0 else "WARNING" if total_issues <= 2 else "ACTION_REQUIRED"
 
     return {
         "status": status,
         "health_score": health_score,
         "total_documents": len(all_docs),
         "total_chunks": len(all_passages),
-        "conflicts_count": len(contra_details),
-        "staleness_count": len(stale_details),
-        "ghost_references_count": len(ghost_details),
-        "contradictions": contra_details,
-        "staleness": stale_details,
-        "ghost_references": ghost_details
+        "conflicts_count": len(unique_contra),
+        "staleness_count": len(unique_stale),
+        "ghost_references_count": len(unique_ghost),
+        "contradictions": unique_contra,
+        "staleness": unique_stale,
+        "ghost_references": unique_ghost
     }
 
 if __name__ == "__main__":
