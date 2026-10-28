@@ -8,11 +8,26 @@ logger = logging.getLogger("truthguard.llm")
 def get_llm():
     """
     Returns an initialized LangChain ChatModel instance based on config.LLM_PROVIDER.
-    Supports 'gemini' (ChatGoogleGenerativeAI) and 'groq' (ChatGroq).
-    If keys are absent or invalid, logs a warning and returns None to allow deterministic fallback.
+    Supports:
+    - 'gemini' (ChatGoogleGenerativeAI)
+    - 'groq' (ChatGroq)
+    - 'ollama' (ChatOllama - 100% local and offline)
+    If keys or local services are absent/invalid, logs a warning and returns None to allow deterministic fallback.
     """
     provider = (config.LLM_PROVIDER or "gemini").lower()
     
+    if provider == "ollama":
+        try:
+            from langchain_ollama import ChatOllama
+            return ChatOllama(
+                model=config.OLLAMA_MODEL or "llama3",
+                base_url=config.OLLAMA_BASE_URL or "http://localhost:11434",
+                temperature=0.0
+            )
+        except Exception as e:
+            logger.warning(f"Ollama local service not reachable or failed: {e}. Falling back to deterministic engine.")
+            return None
+
     if provider == "groq":
         api_key = config.GROQ_API_KEY or os.getenv("GROQ_API_KEY", "")
         if not api_key or "your_groq" in api_key.lower():

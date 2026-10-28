@@ -11,7 +11,7 @@ def get_config_val(key: str, default: str = "") -> str:
     val = os.getenv(key, "")
     return val if val else default
 
-# LLM Configuration: 'gemini' or 'groq'
+# LLM Configuration: 'gemini', 'groq', or 'ollama'
 LLM_PROVIDER = get_config_val("LLM_PROVIDER", "gemini").lower()
 
 # Gemini Config
@@ -21,6 +21,10 @@ GEMINI_MODEL = get_config_val("GEMINI_MODEL", "gemini-1.5-flash")
 # Groq Config
 GROQ_API_KEY = get_config_val("GROQ_API_KEY", "")
 GROQ_MODEL = get_config_val("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+# Ollama Config (Local 100% Free / Offline)
+OLLAMA_BASE_URL = get_config_val("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = get_config_val("OLLAMA_MODEL", "llama3")
 
 # OCR Configuration
 TESSERACT_CMD = get_config_val("TESSERACT_CMD", "")
