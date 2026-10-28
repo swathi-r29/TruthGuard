@@ -134,7 +134,7 @@ class TestDocumentProcessor(unittest.TestCase):
         self.assertIn("empty", res_empty["error"].lower())
 
         # Test 2: Unsupported extension
-        res_unsupported = process_document(b"some content", "text.txt")
+        res_unsupported = process_document(b"some content", "data.xyz")
         self.assertFalse(res_unsupported["success"])
         self.assertIn("unsupported", res_unsupported["error"].lower())
 

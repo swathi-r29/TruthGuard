@@ -1,77 +1,140 @@
-# Debt Detox — AI That Reveals What Your Loan Is Really Costing You
+# TruthGuard: Adversarial Verification for Multi-Agent Document Q&A
 
-Debt Detox is a financial literacy and analysis application built for borrowers. It analyzes loan agreements, credit card statements, and Buy Now Pay Later (BNPL) contracts to reveal upfront, recurring, and conditional costs that might otherwise go unnoticed.
+**TruthGuard** is a multi-agent system designed to answer complex organizational questions over conflicting corporate documents (policies, amendments, circulars, handbooks, FAQs) **without silently blending conflicting data or hallucinating reconciliation**.
 
-The project processes documents locally using **PyMuPDF**, performs OCR on scanned materials via **Tesseract**, extracts terms using **Ollama** (local LLM), and performs precise, deterministic financial calculations in **Python** (preventing LLM math errors).
-
----
-
-## Key Features
-
-1. **Deterministic Calculations**: Python computes EMI, interest, taxes, and net disbursements. No reliance on LLM arithmetic.
-2. **Traceable Findings**: Every extracted term includes its exact page number and supporting text snippet as evidence.
-3. **Transparency Score**: A metric (0-100) scoring a contract's consumer-friendliness based on fee count, prepayment clauses, and penalty rates.
-4. **Interactive Payoff Simulator**: Models the financial impact of extra monthly or one-time principal prepayments.
-5. **Multi-Debt Strategy Tool**: Ranks debts by priority using Avalanche (highest interest first) or Snowball (smallest balance first).
+TruthGuard leverages **LangGraph** for multi-agent state graph orchestration, **ChromaDB** for local vector storage, and allows seamless switching between **Google Gemini Flash** (`ChatGoogleGenerativeAI`) and **Groq** (`ChatGroq`) via `.env`, with built-in deterministic verification fallbacks.
 
 ---
 
-## Installation & Setup
+## 🛡️ Core Defensive Capabilities
 
-### 1. Prerequisites (Windows)
+1. **Echo Chamber Defense**: Deduplicates repeated chunks so duplicate copies of an older document do not outvote a single authoritative amendment.
+2. **Orphaned Exception Guard**: Automatically stitches surrounding context to prevent critical qualifying clauses (e.g., *"except for contract staff"*, *"provided however"*) from being truncated.
+3. **Quarantine Filter**: Automatically quarantines unverified or low-authority inputs (`signature_verified == False` or `authority_level < 2`) to protect against policy spoofing.
+4. **Adversarial Critic Verifier**: Actively checks drafts for factual contradictions, staleness, ghost references (pointing to non-existent document IDs), and unsupported claims.
+5. **Governing Resolution Engine**:
+   - **Authority Precedence**: Higher authority level strictly overrides lower authority (Board = 3 > Department Head = 2 > Informal/FAQ = 1).
+   - **Explicit Supersession**: Enforces designated replacement chains (`supersedes`).
+   - **Temporal Order**: At equal authority, newer documents supersede older documents.
+   - **Ghost Reference & Refusal to Guess**: Flags irreconcilable positions for human review instead of guessing.
+   - **Time-Travel Querying**: Historical queries (e.g. `target_date="2023-06-01"`) snapshot policies valid at that exact historical moment.
 
-* **Python 3.11+**
-* **Tesseract OCR**:
-  * Download the installer from: [UB Mannheim Tesseract GitHub](https://github.com/UB-Mannheim/tesseract/wiki)
-  * Run the installer.
-  * *Option A*: Add the Tesseract directory (e.g. `C:\Program Files\Tesseract-OCR`) to your system environment variables `PATH`.
-  * *Option B*: Configure it in `.env`:
-    ```env
-    TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
-    ```
-* **Ollama (for Local LLM)**:
-  * Download and install from [Ollama.com](https://ollama.com).
-  * Launch Ollama.
-  * Pull a model for extraction (we recommend `gemma2:2b` or `llama3` for standard setups):
-    ```cmd
-    ollama pull gemma2:2b
-    ```
+---
 
-### 2. Project Installation
+## 🏗️ Multi-Agent Architecture
 
-1. Clone or copy the codebase to a directory (e.g., `d:\DEBT DETOX`).
-2. Create a virtual environment and activate it:
-   ```cmd
-   python -m venv .venv
-   .venv\Scripts\activate
-   ```
-3. Install dependencies:
-   ```cmd
-   pip install -r requirements.txt
-   ```
-
-### 3. Local Environment
-
-Copy `.env.example` to `.env` and verify the settings:
-```cmd
-copy .env.example .env
 ```
-Ensure your `OLLAMA_MODEL` in `.env` matches the model you pulled in Ollama (e.g., `gemma2:2b`).
-
----
-
-## Running the Application
-
-Activate your virtual environment and launch Streamlit:
-```cmd
-streamlit run app.py
+[ User Query / Historical Date ]
+              │
+              ▼
+      ┌───────────────┐
+      │ RetrieverNode │  <--- ChromaDB Vector Store (Chunks & Metadata)
+      └───────┬───────┘
+              │
+              ▼
+     ┌─────────────────┐
+     │ EvidencePrepNode│  <--- Echo Chamber Defense + Orphaned Exception Guard + Quarantine Filter
+     └────────┬────────┘
+              │
+              ▼
+     ┌─────────────────┐
+     │ SynthesizerNode │ <--- Drafts cited answer: [Doc: {title}, Ver: {v}, Date: {d}]
+     └────────┬────────┘
+              │
+              ▼
+       ┌──────────────┐
+       │  CriticNode  │  <--- Adversarial Verification (Contradictions, Staleness, Hallucinations)
+       └──────┬───────┘
+              │
+         [ Valid? ] ─── (No & Revisions < 2) ───> [ Increment Revision ] ──> SynthesizerNode
+              │ (Yes or Revisions == 2)
+              ▼
+     ┌─────────────────┐
+     │ ResolutionNode  │  <--- VERIFIED | CONFLICT_RESOLVED | FLAGGED_FOR_REVIEW
+     └────────┬────────┘
+              │
+              ▼
+            [ END ]
 ```
 
 ---
 
-## Running Tests
+## 🚀 Quickstart Guide
 
-Verify the calculations and schemas:
-```cmd
-python -m unittest discover tests
+### 1. Prerequisites
+- Python 3.11+
+- Node.js 18+ & npm
+
+### 2. Environment Configuration
+Copy `.env.example` to `.env`:
+```env
+# LLM Provider: 'gemini' or 'groq'
+LLM_PROVIDER=gemini
+
+# Google Gemini Flash configuration
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-1.5-flash
+
+# Groq configuration (Fast Llama-3 inference)
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=llama-3.3-70b-versatile
 ```
+
+### 3. Backend Setup
+Install Python dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+Seed sample test corpus into ChromaDB:
+```bash
+python seed_samples.py
+```
+
+Run FastAPI Backend:
+```bash
+python app.py
+```
+*API runs at `http://localhost:8000` (docs available at `http://localhost:8000/docs`).*
+
+### 4. Frontend Setup
+In a new terminal:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+*Frontend runs at `http://localhost:5173`.*
+
+---
+
+## 🧪 Automated Test Suite
+
+Run the full automated test suite covering all specified adversarial scenarios:
+
+```bash
+pytest tests/test_truthguard.py -v
+```
+
+### Test Scenarios Covered:
+1. `test_standard_conflict`: Policy 2022 (12 days) vs Board Amendment 2025 (15 days) -> Resolves to 15 days with governing precedence justification.
+2. `test_newer_but_weaker`: 2024 Board Policy ($75) vs 2025 Slack FAQ ($100) -> Board Policy governs; weaker authority quarantined.
+3. `test_ghost_reference`: Document claiming to supersede a non-existent document ID -> Abstains and flags as `FLAGGED_FOR_REVIEW`.
+4. `test_unverified_spoof`: Unsigned file attempting to change policy -> Quarantined by Evidence Prep.
+5. `test_time_travel`: Query specifying historical date (e.g. 2023) -> Returns 2022 policy value instead of 2025 value.
+
+Also run document processor unit tests:
+```bash
+pytest tests/test_document_processor.py -v
+```
+
+---
+
+## 📡 Backend API Endpoints
+
+- `POST /api/upload`: Multipart file upload with authority metadata (`title`, `version`, `effective_date`, `issuer`, `authority_level`, `supersedes`, `signature_verified`).
+- `POST /api/query`: Runs the full LangGraph pipeline given `{"query": str, "target_date": Optional[str]}`. Returns `status`, `final_answer`, `citations`, `critique`, `revision_count`, and `provenance_details`.
+- `GET /api/documents`: Returns list of all ingested documents in the vector store with authority levels and versions.
+- `DELETE /api/documents`: Clears the vector store.
+- `POST /api/seed_samples`: One-click endpoint to seed sample test policies.
+- `GET /api/health`: Health status and provider configuration.

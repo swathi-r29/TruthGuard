@@ -4,7 +4,7 @@ from .text_cleaner import clean_text
 
 def process_document(file_bytes: bytes, file_name: str) -> dict:
     """
-    Processes a PDF or image document and returns a structured dictionary representing the document data.
+    Processes a PDF, markdown, text, or image document and returns a structured dictionary representing the document data.
     Conforms to the following format:
     {
         "success": bool,
@@ -17,7 +17,6 @@ def process_document(file_bytes: bytes, file_name: str) -> dict:
         "error": str (optional)
     }
     """
-    # 1. Validation
     if not file_name:
         return {
             "success": False,
@@ -32,10 +31,10 @@ def process_document(file_bytes: bytes, file_name: str) -> dict:
         
     ext = file_name.split('.')[-1].lower()
     
-    if ext not in ['pdf', 'png', 'jpg', 'jpeg']:
+    if ext not in ['pdf', 'png', 'jpg', 'jpeg', 'txt', 'md', 'markdown']:
         return {
             "success": False,
-            "error": f"Unsupported file type: .{ext}. Supported types: PDF, PNG, JPG, JPEG.",
+            "error": f"Unsupported file type: .{ext}. Supported types: PDF, TXT, MD, PNG, JPG, JPEG.",
             "file_name": file_name,
             "file_type": ext,
             "total_pages": 0,
@@ -56,12 +55,11 @@ def process_document(file_bytes: bytes, file_name: str) -> dict:
             "full_text": ""
         }
         
-    # File size limit check (e.g. 20MB)
-    MAX_FILE_SIZE = 20 * 1024 * 1024
+    MAX_FILE_SIZE = 25 * 1024 * 1024
     if len(file_bytes) > MAX_FILE_SIZE:
         return {
             "success": False,
-            "error": f"File exceeds the maximum size limit of 20MB (Size: {len(file_bytes)/(1024*1024):.2f}MB).",
+            "error": f"File exceeds the maximum size limit of 25MB (Size: {len(file_bytes)/(1024*1024):.2f}MB).",
             "file_name": file_name,
             "file_type": ext,
             "total_pages": 0,
@@ -74,7 +72,18 @@ def process_document(file_bytes: bytes, file_name: str) -> dict:
     ocr_used = False
     
     try:
-        if ext == 'pdf':
+        if ext in ['txt', 'md', 'markdown']:
+            try:
+                raw_str = file_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                raw_str = file_bytes.decode('latin-1', errors='replace')
+            cleaned = clean_text(raw_str)
+            pages.append({
+                "page_number": 1,
+                "text": cleaned
+            })
+
+        elif ext == 'pdf':
             import fitz
             try:
                 doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -115,14 +124,12 @@ def process_document(file_bytes: bytes, file_name: str) -> dict:
                 
                 if len(cleaned_text.strip()) < 50 or (word_count < 15 and has_images):
                     try:
-                        # Render page as PNG image bytes at 300 DPI for high OCR accuracy
                         pix = page.get_pixmap(dpi=300)
                         png_bytes = pix.tobytes("png")
                         
                         ocr_text = extract_text_from_image(png_bytes)
                         ocr_clean = clean_text(ocr_text)
                         
-                        # Use OCR text if it extracted meaningful content
                         if len(ocr_clean.strip()) >= len(cleaned_text.strip()):
                             cleaned_text = ocr_clean
                             ocr_used = True
@@ -130,7 +137,6 @@ def process_document(file_bytes: bytes, file_name: str) -> dict:
                         import logging
                         logging.warning(f"Tesseract OCR not installed, relying on native text for page {idx + 1}: {t_err}")
                     except Exception as e:
-                        # If image conversion or unexpected OCR error occurs, log it and keep whatever text was there (or empty)
                         import logging
                         logging.error(f"Error during page-level OCR on page {idx + 1}: {e}")
                 
@@ -143,7 +149,6 @@ def process_document(file_bytes: bytes, file_name: str) -> dict:
             
         elif ext in ['png', 'jpg', 'jpeg']:
             try:
-                # Validate image is openable and not corrupted
                 from PIL import Image
                 import io
                 Image.open(io.BytesIO(file_bytes)).verify()
@@ -203,4 +208,3 @@ def process_document(file_bytes: bytes, file_name: str) -> dict:
             "pages": [],
             "full_text": ""
         }
-
