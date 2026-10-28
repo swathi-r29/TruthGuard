@@ -74,9 +74,9 @@ def _deterministic_synthesis(passages: List[PassageChunk], question: str, target
     statements = []
     for p in valid_passages:
         meta = p.metadata
-        # Pick the most relevant sentences from the chunk
-        lines = [line.strip() for line in p.content.split("\n") if line.strip()]
-        snippet = " ".join(lines[:3]) if lines else p.content.strip()
+        # Pick the most relevant sentences from the chunk, stripping raw markdown headers
+        lines = [re.sub(r'#{1,6}\s*', '', line).strip() for line in p.content.split("\n") if line.strip()]
+        snippet = " ".join(lines[:3]) if lines else re.sub(r'#{1,6}\s*', '', p.content).strip()
         citation = f"[Doc: {meta.title}, Ver: {meta.version}, Date: {meta.effective_date}]"
         statements.append(f"{snippet} {citation}")
 

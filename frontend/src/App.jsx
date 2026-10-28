@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 
 const API_BASE = 'http://localhost:8000';
 
-function renderInline(str, onCitationClick) {
+function renderInline(str, onCitationClick, onCitationHover) {
   if (!str) return '';
-  const parts = str.split(/(\*\*.*?\*\*|\[Doc:.*?\])/g);
+  // Strip any accidental markdown '#' hashtags so raw syntax never renders
+  const cleanedStr = str.replace(/#{1,6}\s*/g, '');
+  const parts = cleanedStr.split(/(\*\*.*?\*\*|\[Doc:.*?\])/g);
   return parts.map((part, idx) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={idx} style={{ color: '#ffffff', fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
@@ -14,21 +16,25 @@ function renderInline(str, onCitationClick) {
         <span
           key={idx}
           onClick={() => onCitationClick && onCitationClick(part)}
+          onMouseEnter={() => onCitationHover && onCitationHover(part)}
           style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: '4px',
             padding: '2px 8px',
             borderRadius: '6px',
-            background: 'rgba(56, 189, 248, 0.15)',
-            border: '1px solid rgba(56, 189, 248, 0.35)',
+            background: 'rgba(56, 189, 248, 0.2)',
+            border: '1px solid rgba(56, 189, 248, 0.5)',
             color: '#38BDF8',
             fontSize: '11px',
             fontWeight: 700,
             cursor: 'pointer',
             margin: '0 4px',
-            verticalAlign: 'baseline'
+            verticalAlign: 'baseline',
+            transition: 'all 0.2s ease',
+            boxShadow: '0 2px 6px rgba(56, 189, 248, 0.2)'
           }}
+          title="Click or hover to highlight raw document snippet in Provenance"
         >
           📄 {part.slice(1, -1)}
         </span>
@@ -38,7 +44,7 @@ function renderInline(str, onCitationClick) {
   });
 }
 
-function FormattedMarkdown({ text, onCitationClick }) {
+function FormattedMarkdown({ text, onCitationClick, onCitationHover }) {
   if (!text) return null;
 
   // Clean any raw hashtags before rendering
@@ -47,23 +53,56 @@ function FormattedMarkdown({ text, onCitationClick }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '14px', lineHeight: '1.7', color: '#F1F5F9' }}>
       {blocks.map((block, bIdx) => {
-        const trimmed = block.trim();
+        let trimmed = block.trim();
         if (!trimmed) return null;
 
-        // Header check: strip leading #, ##, ###, ####
+        // Strip leading # symbols completely if present
+        let isHeader = false;
+        let headerLevel = 2;
         if (trimmed.startsWith('#')) {
-          const match = trimmed.match(/^(#{1,6})\s*(.*)/);
+          const match = trimmed.match(/^(#{1,6})\s*(.*)/s);
           if (match) {
-            const level = match[1].length;
-            const content = match[2];
-            const fontSize = level <= 2 ? '17px' : level === 3 ? '15px' : '13.5px';
-            const color = level <= 3 ? '#38BDF8' : '#A5B4FC';
-            return (
-              <h4 key={bIdx} style={{ margin: '6px 0 2px 0', fontSize, fontWeight: 700, color, letterSpacing: '-0.01em' }}>
-                {renderInline(content, onCitationClick)}
-              </h4>
-            );
+            isHeader = true;
+            headerLevel = match[1].length;
+            trimmed = match[2];
           }
+        }
+
+        // Section header recognition: render without any # hashtag
+        if (
+          isHeader ||
+          trimmed.startsWith('Governing Policy Verdict:') ||
+          trimmed.startsWith('FLAGGED FOR HUMAN REVIEW:') ||
+          trimmed.startsWith('Conflict Reasons:') ||
+          trimmed.startsWith('Competing Positions') ||
+          trimmed.startsWith('Precedence Justification') ||
+          trimmed.startsWith('Previous Version Context') ||
+          trimmed.startsWith('⚠️ Ripple Effect Tracker')
+        ) {
+          const fontSize = headerLevel <= 2 ? '16px' : headerLevel === 3 ? '15px' : '13.5px';
+          const color = trimmed.includes('FLAGGED')
+            ? '#FCA5A5'
+            : trimmed.includes('Verdict')
+            ? '#38BDF8'
+            : trimmed.includes('Ripple')
+            ? '#FCD34D'
+            : '#93C5FD';
+          return (
+            <div
+              key={bIdx}
+              style={{
+                margin: '6px 0 2px 0',
+                fontSize,
+                fontWeight: 800,
+                color,
+                letterSpacing: '-0.01em',
+                borderBottom: trimmed.includes('Verdict') || trimmed.includes('FLAGGED') ? '1px solid rgba(148, 163, 184, 0.2)' : 'none',
+                paddingBottom: '4px'
+              }}
+            >
+              {renderInline(trimmed, onCitationClick, onCitationHover)}
+            </div>
+          );
         }
 
         // Blockquote
@@ -78,7 +117,7 @@ function FormattedMarkdown({ text, onCitationClick }) {
               fontStyle: 'italic',
               color: '#CBD5E1'
             }}>
-              {renderInline(content, onCitationClick)}
+              {renderInline(content, onCitationClick, onCitationHover)}
             </div>
           );
         }
@@ -90,7 +129,7 @@ function FormattedMarkdown({ text, onCitationClick }) {
             <ul key={bIdx} style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {items.map((it, iIdx) => (
                 <li key={iIdx}>
-                  {renderInline(it.replace(/^[-*]\s*/, ''), onCitationClick)}
+                  {renderInline(it.replace(/^[-*]\s*/, ''), onCitationClick, onCitationHover)}
                 </li>
               ))}
             </ul>
@@ -105,7 +144,7 @@ function FormattedMarkdown({ text, onCitationClick }) {
         // Normal paragraph
         return (
           <p key={bIdx} style={{ margin: 0 }}>
-            {renderInline(trimmed, onCitationClick)}
+            {renderInline(trimmed, onCitationClick, onCitationHover)}
           </p>
         );
       })}
@@ -121,6 +160,30 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [activeRightTab, setActiveRightTab] = useState('critic'); // 'critic' | 'provenance' | 'vault'
   const [selectedCitation, setSelectedCitation] = useState(null);
+  const [highlightedDoc, setHighlightedDoc] = useState(null);
+
+  const handleCitationFocus = (citationText) => {
+    setActiveRightTab('provenance');
+    let target = '';
+    if (typeof citationText === 'string') {
+      const match = citationText.match(/\[Doc:\s*([^,]+)/);
+      target = match ? match[1].trim() : citationText.trim();
+    } else if (citationText?.title) {
+      target = citationText.title.trim();
+    }
+    setHighlightedDoc(target);
+
+    setTimeout(() => {
+      const allCards = document.querySelectorAll('[data-doc-title]');
+      for (const card of allCards) {
+        const title = card.getAttribute('data-doc-title') || '';
+        if (title.toLowerCase().includes(target.toLowerCase()) || target.toLowerCase().includes(title.toLowerCase())) {
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          break;
+        }
+      }
+    }, 120);
+  };
 
   // Document Vault & Ingestion Drawer
   const [documents, setDocuments] = useState([]);
@@ -272,7 +335,8 @@ export default function App() {
     { label: 'Newer but Weaker (Board vs Slack)', q: 'What is the domestic per diem meal reimbursement allowance?', date: '' },
     { label: 'Ghost Reference (Unverified ID)', q: 'What is the remote work monthly equipment stipend?', date: '' },
     { label: 'Unverified Spoof (Unsigned bonus)', q: 'What is the engineer performance bonus percentage?', date: '' },
-    { label: 'Time-Travel Query (Year 2023)', q: 'What is the annual paid leave entitlement in days?', date: '2023-06-01' }
+    { label: 'Time-Travel Query (2023-05-10)', q: 'What was the leave entitlement on 2023-05-10?', date: '' },
+    { label: 'Time-Travel Picker (Year 2023)', q: 'What is the annual paid leave entitlement in days?', date: '2023-06-01' }
   ];
 
   const getStatusBadge = (status) => {
@@ -609,7 +673,8 @@ export default function App() {
                 }}>
                   <FormattedMarkdown
                     text={result.final_answer}
-                    onCitationClick={() => setActiveRightTab('provenance')}
+                    onCitationClick={(tag) => handleCitationFocus(tag)}
+                    onCitationHover={(tag) => handleCitationFocus(tag)}
                   />
                 </div>
 
@@ -617,7 +682,7 @@ export default function App() {
                 {result.citations && result.citations.length > 0 && (
                   <div>
                     <h3 style={{ fontSize: '12px', textTransform: 'uppercase', color: '#94A3B8', letterSpacing: '0.05em', marginBottom: '8px' }}>
-                      Cited Authoritative Passages:
+                      Cited Authoritative Passages (Click / Hover to Highlight):
                     </h3>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                       {result.citations.map((c, i) => (
@@ -625,20 +690,23 @@ export default function App() {
                           key={i}
                           onClick={() => {
                             setSelectedCitation(c);
-                            setActiveRightTab('provenance');
+                            handleCitationFocus(c.title);
                           }}
+                          onMouseEnter={() => handleCitationFocus(c.title)}
                           style={{
                             padding: '6px 12px',
                             borderRadius: '8px',
-                            background: selectedCitation?.title === c.title ? 'rgba(56, 189, 248, 0.25)' : 'rgba(56, 189, 248, 0.1)',
-                            border: '1px solid rgba(56, 189, 248, 0.3)',
+                            background: (highlightedDoc && c.title.toLowerCase().includes(highlightedDoc.toLowerCase())) ? 'rgba(56, 189, 248, 0.35)' : 'rgba(56, 189, 248, 0.1)',
+                            border: (highlightedDoc && c.title.toLowerCase().includes(highlightedDoc.toLowerCase())) ? '1px solid #38BDF8' : '1px solid rgba(56, 189, 248, 0.3)',
                             color: '#38BDF8',
                             fontSize: '12px',
                             fontWeight: 600,
                             cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '6px'
+                            gap: '6px',
+                            transition: 'all 0.2s ease',
+                            boxShadow: (highlightedDoc && c.title.toLowerCase().includes(highlightedDoc.toLowerCase())) ? '0 0 12px rgba(56, 189, 248, 0.4)' : 'none'
                           }}
                         >
                           📄 {c.title} (v{c.version})
@@ -804,38 +872,121 @@ export default function App() {
 
             {/* TAB 2: Provenance Comparison */}
             {activeRightTab === 'provenance' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', overflowY: 'auto' }}>
-                {result?.provenance_details?.side_by_side ? (
-                  result.provenance_details.side_by_side.map((doc, idx) => (
-                    <div key={idx} style={{
-                      background: 'rgba(7, 17, 31, 0.7)',
-                      border: '1px solid rgba(148, 163, 184, 0.15)',
-                      borderRadius: '10px',
-                      padding: '14px'
-                    }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <h4 style={{ margin: 0, fontSize: '14px', color: '#38BDF8' }}>
-                          {doc.title} <span style={{ color: '#94A3B8', fontSize: '12px' }}>v{doc.version}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+                {/* Ripple Effect Tracker Section */}
+                {result?.provenance_details?.ripple_effects?.length > 0 && (
+                  <div style={{
+                    background: 'rgba(245, 158, 11, 0.08)',
+                    border: '1px solid rgba(245, 158, 11, 0.3)',
+                    borderRadius: '12px',
+                    padding: '16px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                      <span style={{ fontSize: '18px' }}>⚠️</span>
+                      <div>
+                        <h4 style={{ margin: 0, fontSize: '13px', textTransform: 'uppercase', color: '#FCD34D', fontWeight: 800 }}>
+                          Ripple Effect Tracker: Downstream Dependencies
                         </h4>
-                        {getAuthorityBadge(doc.authority_level)}
-                      </div>
-                      <div style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '8px' }}>
-                        Issuer: <strong>{doc.issuer}</strong> | Effective: <strong>{doc.effective_date}</strong>
-                        {doc.supersedes?.length > 0 && <span> | Supersedes: <strong>{doc.supersedes.join(', ')}</strong></span>}
-                      </div>
-                      <div style={{ background: 'rgba(15, 30, 51, 0.6)', padding: '10px', borderRadius: '6px', fontSize: '12px', fontStyle: 'italic', color: '#E2E8F0' }}>
-                        "{doc.excerpt}"
+                        <p style={{ margin: 0, fontSize: '11px', color: '#94A3B8' }}>
+                          Identifies dependent policies, calculations, and ERP systems requiring realignment
+                        </p>
                       </div>
                     </div>
-                  ))
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {result.provenance_details.ripple_effects.map((eff, eIdx) => (
+                        <div key={eIdx} style={{ background: 'rgba(7, 17, 31, 0.75)', borderRadius: '8px', padding: '10px 12px', border: '1px solid rgba(148, 163, 184, 0.15)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                            <span style={{ fontWeight: 700, fontSize: '12px', color: '#FFFFFF' }}>{eff.dependent_entity}</span>
+                            <span style={{
+                              fontSize: '10px',
+                              fontWeight: 800,
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              background: eff.urgency === 'CRITICAL' ? 'rgba(239, 68, 68, 0.25)' : eff.urgency === 'HIGH' ? 'rgba(245, 158, 11, 0.25)' : 'rgba(56, 189, 248, 0.25)',
+                              color: eff.urgency === 'CRITICAL' ? '#EF4444' : eff.urgency === 'HIGH' ? '#F59E0B' : '#38BDF8',
+                              border: `1px solid ${eff.urgency === 'CRITICAL' ? '#EF4444' : eff.urgency === 'HIGH' ? '#F59E0B' : '#38BDF8'}`
+                            }}>
+                              {eff.urgency}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '4px' }}>
+                            Impact Type: <strong style={{ color: '#CBD5E1' }}>{eff.impact_type}</strong>
+                          </div>
+                          <div style={{ fontSize: '11.5px', color: '#E2E8F0', lineHeight: 1.5 }}>
+                            {eff.impact_description}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Document Excerpt Cards with Interactive Citation Highlighting */}
+                {result?.provenance_details?.side_by_side ? (
+                  result.provenance_details.side_by_side.map((doc, idx) => {
+                    const isMatch = highlightedDoc && (
+                      doc.title.toLowerCase().includes(highlightedDoc.toLowerCase()) ||
+                      highlightedDoc.toLowerCase().includes(doc.title.toLowerCase()) ||
+                      doc.doc_id.toLowerCase().includes(highlightedDoc.toLowerCase())
+                    );
+
+                    return (
+                      <div
+                        key={idx}
+                        data-doc-title={doc.title}
+                        id={`doc-card-${doc.doc_id}`}
+                        style={{
+                          background: isMatch ? 'rgba(56, 189, 248, 0.14)' : 'rgba(7, 17, 31, 0.7)',
+                          border: isMatch ? '2px solid #38BDF8' : '1px solid rgba(148, 163, 184, 0.15)',
+                          borderRadius: '12px',
+                          padding: '16px',
+                          boxShadow: isMatch ? '0 0 25px rgba(56, 189, 248, 0.4)' : 'none',
+                          transition: 'all 0.3s ease'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <h4 style={{ margin: 0, fontSize: '14px', color: isMatch ? '#38BDF8' : '#F1F5F9', fontWeight: 700 }}>
+                              {doc.title} <span style={{ color: '#94A3B8', fontSize: '12px', fontWeight: 500 }}>v{doc.version}</span>
+                            </h4>
+                            {isMatch && (
+                              <span style={{ fontSize: '10px', background: '#38BDF8', color: '#07111F', fontWeight: 800, padding: '2px 6px', borderRadius: '4px' }}>
+                                🎯 ACTIVE CITATION TARGET
+                              </span>
+                            )}
+                          </div>
+                          {getAuthorityBadge(doc.authority_level)}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '10px' }}>
+                          Issuer: <strong style={{ color: '#E2E8F0' }}>{doc.issuer}</strong> | Effective: <strong style={{ color: '#E2E8F0' }}>{doc.effective_date}</strong>
+                          {doc.supersedes?.length > 0 && <span> | Supersedes: <strong style={{ color: '#FCD34D' }}>{doc.supersedes.join(', ')}</strong></span>}
+                        </div>
+                        <div style={{
+                          background: 'rgba(15, 30, 51, 0.8)',
+                          padding: '12px',
+                          borderRadius: '8px',
+                          fontSize: '12.5px',
+                          color: isMatch ? '#FFFFFF' : '#CBD5E1',
+                          lineHeight: '1.6',
+                          borderLeft: isMatch ? '3px solid #38BDF8' : '3px solid rgba(148, 163, 184, 0.3)'
+                        }}>
+                          "{doc.excerpt}"
+                        </div>
+                      </div>
+                    );
+                  })
                 ) : result?.citations?.length > 0 ? (
                   result.citations.map((c, idx) => (
-                    <div key={idx} style={{
-                      background: 'rgba(7, 17, 31, 0.7)',
-                      border: '1px solid rgba(148, 163, 184, 0.15)',
-                      borderRadius: '10px',
-                      padding: '14px'
-                    }}>
+                    <div
+                      key={idx}
+                      data-doc-title={c.title}
+                      style={{
+                        background: 'rgba(7, 17, 31, 0.7)',
+                        border: '1px solid rgba(148, 163, 184, 0.15)',
+                        borderRadius: '10px',
+                        padding: '14px'
+                      }}
+                    >
                       <h4 style={{ margin: 0, fontSize: '14px', color: '#38BDF8' }}>
                         {c.title} (v{c.version})
                       </h4>

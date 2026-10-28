@@ -73,6 +73,17 @@ def seed_sample_corpus():
             "authority_level": 1,
             "supersedes": [],
             "signature_verified": False
+        },
+        {
+            "filename": "official_incentive_plan_2024.md",
+            "doc_id": "official_bonus_policy",
+            "title": "Official Corporate Incentive Plan",
+            "version": "1.0",
+            "effective_date": "2024-01-01",
+            "issuer": "Executive Compensation Committee",
+            "authority_level": 3,
+            "supersedes": [],
+            "signature_verified": True
         }
     ]
 

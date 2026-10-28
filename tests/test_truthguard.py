@@ -75,6 +75,8 @@ def test_standard_conflict(test_store, monkeypatch):
     assert "15 days" in result["final_answer"]
     assert "Board Resolution on Annual Leave 2025" in result["final_answer"]
     assert "Precedence Justification" in result["final_answer"]
+    assert len(result["provenance_details"].get("ripple_effects", [])) > 0
+    assert "Ripple Effect Tracker" in result["final_answer"]
 
 def test_newer_but_weaker(test_store, monkeypatch):
     """
@@ -251,3 +253,47 @@ def test_time_travel(test_store, monkeypatch):
     assert "12 days" in result["final_answer"]
     assert "15 days" not in result["final_answer"] or "superseded" in result["final_answer"].lower() or "snapshot" in result["final_answer"].lower()
     assert "2023-06-01" in result["final_answer"]
+
+def test_time_travel_explicit_date(test_store, monkeypatch):
+    """
+    Scenario 6: Time-Travel Query with explicit date in question text.
+    Asking 'What was the leave entitlement on 2023-05-10?' returns the 2022 policy
+    value (12 days) rather than the 2025 amendment (15 days).
+    """
+    patch_store(test_store, monkeypatch)
+
+    doc_2022 = DocumentMetadata(
+        doc_id="leave_policy_2022",
+        title="Annual Leave Policy 2022",
+        version="1.0",
+        effective_date="2022-01-01",
+        issuer="HR Department",
+        authority_level=2,
+        supersedes=[],
+        signature_verified=True
+    )
+    test_store.add_document(
+        doc_2022,
+        "Standard annual paid leave entitlement is 12 days per calendar year for all full-time employees."
+    )
+
+    doc_2025 = DocumentMetadata(
+        doc_id="leave_amendment_2025",
+        title="Board Resolution on Annual Leave 2025",
+        version="2.0",
+        effective_date="2025-01-15",
+        issuer="Executive Board",
+        authority_level=3,
+        supersedes=["leave_policy_2022"],
+        signature_verified=True
+    )
+    test_store.add_document(
+        doc_2025,
+        "The Executive Board hereby resolves that annual paid leave entitlement is 15 days per calendar year. Supersedes leave_policy_2022."
+    )
+
+    result = run_pipeline("What was the leave entitlement on 2023-05-10?")
+
+    assert "12 days" in result["final_answer"]
+    assert "15 days" not in result["final_answer"]
+    assert result["provenance_details"].get("target_date") == "2023-05-10" or "2023-05-10" in result["final_answer"]

@@ -11,18 +11,37 @@ def _normalize_text_for_dedup(text: str) -> str:
 def retriever_node(state: GraphState) -> Dict[str, Any]:
     """
     Retrieves candidate passages from ChromaDB based on the user question.
+    Extracts explicit target dates or years from question if time-travel date not already set,
+    and applies historical filtering to exclude future amendments before ranking.
     """
     question = state.get("question", "")
     target_date = state.get("target_date")
 
+    # If target_date is not set explicitly, extract from question (e.g., '2023-05-10' or '2023')
+    if not target_date:
+        match_iso = re.search(r'\b(20\d\d-\d{2}-\d{2})\b', question)
+        if match_iso:
+            target_date = match_iso.group(1)
+        else:
+            match_year = re.search(r'\b(?:in|on|year|for|as of)\s*(20\d\d)\b', question, re.IGNORECASE)
+            if match_year:
+                target_date = f"{match_year.group(1)}-12-31"
+
     # Semantic search in ChromaDB
     passages = vs.vector_store.search_passages(query=question, n_results=20)
 
+    # Time-travel historical filter: exclude amendments/policies issued AFTER target_date
+    if target_date:
+        passages = [p for p in passages if p.metadata.effective_date <= target_date]
+
     # Initialize provenance details if empty
-    provenance = state.get("provenance_details", {}) or {}
+    provenance = dict(state.get("provenance_details", {}) or {})
     provenance["retrieved_count"] = len(passages)
+    if target_date:
+        provenance["target_date"] = target_date
 
     return {
+        "target_date": target_date,
         "raw_passages": passages,
         "provenance_details": provenance
     }

@@ -207,11 +207,12 @@ def critic_node(state: GraphState) -> Dict[str, Any]:
     has_unsupported = False
     unsupported_claims = []
 
-    combined_evidence = " ".join([p.content.lower() for p in passages])
+    combined_evidence = " ".join([p.content for p in passages])
+    evidence_nums = set(_extract_numbers_and_units(combined_evidence))
     draft_nums = _extract_numbers_and_units(draft)
     for val, unit in draft_nums:
-        # Check if this exact number/unit exists in evidence
-        if f"{val} {unit}".lower() not in combined_evidence and f"{val}{unit}".lower() not in combined_evidence:
+        # Check if extracted metric exists in evidence
+        if (val, unit) not in evidence_nums:
             has_unsupported = True
             unsupported_claims.append(f"Claimed metric '{val} {unit}' is not found in verified evidence.")
 

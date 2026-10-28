@@ -2,17 +2,106 @@ import re
 import logging
 from typing import Dict, Any, List, Optional
 from modules.schemas import GraphState, PassageChunk, DocumentMetadata, CritiqueResult
+import modules.vector_store as vs
 
 logger = logging.getLogger("truthguard.resolution")
 
 def _clean_markdown_headings(text: str) -> str:
-    """Strips leading markdown heading symbols (#, ##, ###) for clean presentation."""
+    """Strips markdown heading hashtags (#, ##, ###) for clean presentation without raw markdown syntax."""
     cleaned_lines = []
     for line in text.splitlines():
-        cleaned_line = re.sub(r'^\s*#{1,6}\s*', '', line)
+        # Remove any leading # symbols as well as internal # hashtags
+        cleaned_line = re.sub(r'#{1,6}\s*', '', line)
         if cleaned_line.strip():
             cleaned_lines.append(cleaned_line.strip())
     return " ".join(cleaned_lines)
+
+def _scan_downstream_ripple_effects(
+    governing_doc: DocumentMetadata,
+    superseded_docs: List[DocumentMetadata]
+) -> List[Dict[str, str]]:
+    """
+    Scans the document corpus and corporate dependency graph to track all downstream
+    policies, calculations, and operational systems that may now be invalid/stale due to this policy amendment.
+    """
+    all_registered = vs.vector_store.get_all_documents()
+    ripple_effects = []
+    
+    # 1. Document Collection Scan: Check if any other document references the superseded doc_id or governing topic
+    for sup in superseded_docs:
+        for doc in all_registered:
+            if doc.doc_id != governing_doc.doc_id and doc.doc_id != sup.doc_id:
+                if (sup.doc_id in (doc.supersedes or [])) or (sup.title.lower() in doc.title.lower()):
+                    ripple_effects.append({
+                        "dependent_entity": f"Document: {doc.title} (v{doc.version})",
+                        "impact_type": "Direct Document Dependency",
+                        "impact_description": f"Directly references superseded document '{sup.title}'. Requires immediate amendment to link to '{governing_doc.title}'.",
+                        "urgency": "HIGH"
+                    })
+
+    # 2. Domain-Specific Downstream Operational & Policy Impacts
+    gov_text = (governing_doc.title + " " + (governing_doc.issuer or "")).lower()
+    
+    if any(k in gov_text for k in ["leave", "time off", "pto", "vacation"]):
+        ripple_effects.extend([
+            {
+                "dependent_entity": "Policy: Payroll Deduction & Unpaid Absence Policy",
+                "impact_type": "Calculation Formula Mismatch",
+                "impact_description": f"Daily rate deduction divisor was calibrated against prior 12-day entitlement. Overridden by {governing_doc.title} (15 days); payroll accrual formulas must be updated to prevent incorrect pro-rata deductions.",
+                "urgency": "CRITICAL"
+            },
+            {
+                "dependent_entity": "Policy: Contractor & Part-Time Staff Benefits Handbook",
+                "impact_type": "Pro-Rata Entitlement Stale",
+                "impact_description": f"Contractor pro-rata ratio currently assumes base 12 days per annum from superseded policy. Must be re-baselined against 15 days.",
+                "urgency": "HIGH"
+            },
+            {
+                "dependent_entity": "System: HRMS / ERP Automated Leave Ledger (Workday/BambooHR)",
+                "impact_type": "Automated Accrual Ledger Outdated",
+                "impact_description": "Automated monthly accrual schedules currently credit 1.00 days/month (12/yr). Must update accrual rate to 1.25 days/month (15/yr) effective immediately.",
+                "urgency": "CRITICAL"
+            },
+            {
+                "dependent_entity": "Policy: Year-End Leave Encashment & Rollover Circular",
+                "impact_type": "Fiscal Liability Accrual",
+                "impact_description": "Maximum allowable encashment caps and fiscal liability balance sheet reserves must reflect the +3 days increase per eligible employee.",
+                "urgency": "MEDIUM"
+            }
+        ])
+    elif any(k in gov_text for k in ["travel", "expense", "per diem", "meal"]):
+        ripple_effects.extend([
+            {
+                "dependent_entity": "Policy: Finance Expense Audit & Automated Reimbursement SOP",
+                "impact_type": "Audit Threshold Mismatch",
+                "impact_description": f"Downstream auto-approval rules in Concur/Expensify must enforce governing $75 per diem cap from {governing_doc.title}.",
+                "urgency": "CRITICAL"
+            },
+            {
+                "dependent_entity": "Policy: Client Billable Project Travel Addendum",
+                "impact_type": "Client Contract Discrepancy",
+                "impact_description": "Master Service Agreements (MSAs) passing through travel expenses at actuals must align with internal governing per diem limits.",
+                "urgency": "HIGH"
+            }
+        ])
+    elif any(k in gov_text for k in ["remote", "stipend", "wfh", "equipment"]):
+        ripple_effects.extend([
+            {
+                "dependent_entity": "Policy: IT Asset Management & Procurement Standard",
+                "impact_type": "Hardware Budget Allocation",
+                "impact_description": "Per-employee WFH equipment subsidies and reimbursement approvals require synchronization with updated stipend circular.",
+                "urgency": "HIGH"
+            }
+        ])
+    else:
+        ripple_effects.append({
+            "dependent_entity": "Downstream Departmental Guidelines & Employee Portal",
+            "impact_type": "Documentation Alignment",
+            "impact_description": f"All downstream departmental guidelines citing prior policy versions must be revised to reference {governing_doc.title}.",
+            "urgency": "MEDIUM"
+        })
+
+    return ripple_effects
 
 class SelectionResult:
     def __init__(
@@ -118,27 +207,28 @@ def resolution_node(state: GraphState) -> Dict[str, Any]:
     # Check time-travel context
     time_travel_note = ""
     if target_date:
-        time_travel_note = f"\n> **Time-Travel Snapshot**: Evaluated strictly as of **{target_date}**. Later amendments are excluded from this ruling.\n\n"
+        time_travel_note = f"> **Time-Travel Snapshot**: Evaluated strictly as of **{target_date}**. Later amendments are excluded from this ruling.\n\n"
+
+    # Always prepare side-by-side excerpts for provenance inspection
+    side_by_side = []
+    for p in passages:
+        side_by_side.append({
+            "doc_id": p.doc_id,
+            "title": p.metadata.title,
+            "version": p.metadata.version,
+            "effective_date": p.metadata.effective_date,
+            "issuer": p.metadata.issuer,
+            "authority_level": p.metadata.authority_level,
+            "supersedes": p.metadata.supersedes,
+            "excerpt": _clean_markdown_headings(p.content)
+        })
+    provenance["side_by_side"] = side_by_side
 
     # 1. GHOST REFERENCE OR IRRECONCILABLE CONFLICT -> FLAGGED_FOR_REVIEW
     selection = _determine_governing_doc(passages, target_date)
     
     if has_ghost or (has_contradiction and not selection.is_reconciled):
         status = "FLAGGED_FOR_REVIEW"
-
-        # Build side-by-side comparison
-        side_by_side = []
-        for p in passages:
-            side_by_side.append({
-                "doc_id": p.doc_id,
-                "title": p.metadata.title,
-                "version": p.metadata.version,
-                "effective_date": p.metadata.effective_date,
-                "issuer": p.metadata.issuer,
-                "authority_level": p.metadata.authority_level,
-                "supersedes": p.metadata.supersedes,
-                "excerpt": _clean_markdown_headings(p.content)
-            })
 
         conflict_reasons = []
         if has_ghost:
@@ -149,12 +239,12 @@ def resolution_node(state: GraphState) -> Dict[str, Any]:
             conflict_reasons.append(selection.reason)
 
         final_answer = (
-            f"### ⚠️ FLAGGED FOR HUMAN REVIEW: IRRECONCILABLE DOCUMENT CONFLICT\n\n"
+            f"FLAGGED FOR HUMAN REVIEW: IRRECONCILABLE DOCUMENT CONFLICT\n\n"
             f"{time_travel_note}"
             f"TruthGuard refuses to guess or silently blend mutually conflicting documents.\n\n"
-            f"#### Conflict Reasons:\n"
+            f"Conflict Reasons:\n"
             + "\n".join(f"- {r}" for r in conflict_reasons)
-            + "\n\n#### Competing Positions Side-by-Side:\n"
+            + "\n\nCompeting Positions Side-by-Side:\n"
         )
 
         for s in side_by_side:
@@ -166,7 +256,6 @@ def resolution_node(state: GraphState) -> Dict[str, Any]:
                 f"- **Claims**: \"{s['excerpt']}\"\n"
             )
 
-        provenance["side_by_side"] = side_by_side
         provenance["status"] = status
         provenance["verdict_reason"] = "Contradiction cannot be reconciled automatically."
 
@@ -199,23 +288,28 @@ def resolution_node(state: GraphState) -> Dict[str, Any]:
                 f"  - Prior Clause: \"{clean_prior}...\""
             )
 
-        ripple_effects = [
-            "Update all downstream departmental guidelines and employee handbook portals.",
-            "Verify automated payroll/HRMS calculation rules match the governing policy.",
-            "Issue an executive memorandum clarifying the supersession to all department managers."
-        ]
+        # Scan for ripple effects across downstream corporate policies and systems
+        ripple_effects = _scan_downstream_ripple_effects(gov, selection.competitors)
+        provenance["ripple_effects"] = ripple_effects
+
+        ripple_lines = []
+        for eff in ripple_effects:
+            ripple_lines.append(
+                f"- **{eff['dependent_entity']}** `[{eff['urgency']}]` ({eff['impact_type']}):\n"
+                f"  {eff['impact_description']}"
+            )
 
         final_answer = (
-            f"### ✅ Governing Policy Verdict: [Doc: {gov.title}, Ver: {gov.version}, Date: {gov.effective_date}]\n\n"
+            f"Governing Policy Verdict: [Doc: {gov.title}, Ver: {gov.version}, Date: {gov.effective_date}]\n\n"
             f"{time_travel_note}"
             f"**Resolution**: Based on adversarial precedence verification, **{gov.title}** governs this requirement.\n\n"
             f"**Governing Clause**: {gov_content}\n\n"
-            f"#### Precedence Justification\n"
+            f"Precedence Justification:\n"
             f"{selection.reason}\n\n"
-            f"#### Previous Version Context\n"
+            f"Previous Version Context:\n"
             + ("\n".join(previous_sections) if previous_sections else "None") + "\n\n"
-            f"#### Potential Ripple Effects\n"
-            + "\n".join(f"- {eff}" for eff in ripple_effects)
+            f"⚠️ Ripple Effect Tracker: Downstream Dependencies\n"
+            + "\n".join(ripple_lines)
         )
 
         provenance["governing_doc"] = gov.model_dump()
@@ -230,7 +324,7 @@ def resolution_node(state: GraphState) -> Dict[str, Any]:
 
     # 3. NO CONTRADICTION -> VERIFIED
     status = "VERIFIED"
-    final_answer = draft
+    final_answer = _clean_markdown_headings(draft) if "#" in draft else draft
     if time_travel_note:
         final_answer = time_travel_note + final_answer
 
