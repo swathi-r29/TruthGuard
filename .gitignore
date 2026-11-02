@@ -51,12 +51,8 @@ chroma_db*/
 *.db
 
 # Temporary & Uploaded Media
-uploads/
 temp/
 tmp/
-*.pdf
-!sample_documents/**/*.pdf
-!sample_documents/*.pdf
 *.png
 *.jpg
 *.jpeg
