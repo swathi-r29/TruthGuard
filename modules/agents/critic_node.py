@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any, List, Tuple
 from modules.schemas import GraphState, PassageChunk, CritiqueResult
 from modules.llm import get_llm
+from modules.cache import llm_cache
 import modules.vector_store as vs
 
 logger = logging.getLogger("truthguard.critic")
@@ -220,10 +221,44 @@ def _audit_passages_adversarially(passages: List[PassageChunk], target_date: str
         ghost_details
     )
 
+def _build_critic_prompt(draft: str, passages: List[PassageChunk]) -> str:
+    """Build the LLM critic prompt from draft + evidence passages."""
+    evidence_text = "\n".join(
+        f"[{i+1}] ({p.metadata.title} v{p.metadata.version} {p.metadata.effective_date}): {p.content[:400]}"
+        for i, p in enumerate(passages)
+    )
+    return (
+        f"{CRITIC_SYSTEM_PROMPT}\n\n"
+        f"Draft Answer:\n{draft}\n\n"
+        f"Source Passages:\n{evidence_text}"
+    )
+
+
+def _parse_llm_critique(json_text: str) -> dict:
+    """Extract and parse the JSON object from the LLM response."""
+    # Strip markdown code fences if present
+    cleaned = re.sub(r"```(?:json)?\s*", "", json_text, flags=re.IGNORECASE).strip(" `")
+    # Find the first '{...}' block
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if match:
+        return json.loads(match.group())
+    raise ValueError("No JSON object found in LLM critique response.")
+
+
 def critic_node(state: GraphState) -> Dict[str, Any]:
     """
     Adversarially evaluates the draft answer against raw/filtered passages.
-    Produces CritiqueResult.
+
+    Execution order
+    ---------------
+    1. Always run the deterministic algorithmic audit (contradiction, staleness,
+       ghost references, hallucination checks) — this is the authoritative verifier.
+    2. If an LLM is available, also invoke it for a second-opinion JSON critique.
+       The LLM call is wrapped with llm_cache to skip repeated API round-trips
+       for identical (draft + evidence) inputs.
+       Cache key = SHA-256(draft_answer + joined_passage_content).
+    3. Merge both signals: any LLM-detected issue supplements the algorithmic result.
+    4. Falls back gracefully to deterministic-only if the LLM is unavailable or errors.
     """
     draft = state.get("draft_answer", "")
     passages = state.get("filtered_passages", [])
@@ -231,43 +266,72 @@ def critic_node(state: GraphState) -> Dict[str, Any]:
     target_date = state.get("target_date")
     revision_count = state.get("revision_count", 0)
 
-    # Perform algorithmic verification
+    # ------------------------------------------------------------------
+    # 1. Deterministic algorithmic audit (always runs)
+    # ------------------------------------------------------------------
     (has_contra, contra_details,
      has_stale, stale_details,
      has_ghost, ghost_details) = _audit_passages_adversarially(passages, target_date)
 
-    # Hallucination check: ensure key claims in draft are supported by passages
+    # Hallucination check: numeric claims in draft must appear in evidence
     has_unsupported = False
     unsupported_claims = []
-
     combined_evidence = " ".join([p.content for p in passages])
     evidence_nums = set(_extract_numbers_and_units(combined_evidence))
     draft_nums = _extract_numbers_and_units(draft)
     for val, unit in draft_nums:
-        # Check if extracted metric exists in evidence
         if (val, unit) not in evidence_nums:
             has_unsupported = True
             unsupported_claims.append(f"Claimed metric '{val} {unit}' is not found in verified evidence.")
 
-    # Check for Ghost Reference
     if has_ghost:
         has_contra = True
         contra_details.extend(ghost_details)
 
-    # Determine validity
-    # If there are unsupported claims or if this is the first draft with unaddressed contradictions/staleness
+    # ------------------------------------------------------------------
+    # 2. LLM-augmented critique (cached, supplements algorithmic result)
+    # ------------------------------------------------------------------
+    llm = get_llm()
+    if llm and draft and passages:
+        prompt = _build_critic_prompt(draft, passages)
+        try:
+            # Cache key encodes draft + full evidence — same inputs, same critique
+            llm_text = llm_cache.get_response(prompt)
+            if llm_text is None:
+                llm_response = llm.invoke(prompt)
+                llm_text = llm_response.content.strip()
+                llm_cache.set_response(prompt, llm_text)
+
+            llm_result = _parse_llm_critique(llm_text)
+
+            # Merge LLM findings (additive — never override the algorithmic audit)
+            if llm_result.get("has_contradiction"):
+                has_contra = True
+                contra_details.extend(llm_result.get("contradiction_details", []))
+            if llm_result.get("has_staleness"):
+                has_stale = True
+                stale_details.extend(llm_result.get("staleness_details", []))
+            if llm_result.get("has_unsupported_claims"):
+                has_unsupported = True
+                unsupported_claims.extend(llm_result.get("unsupported_claims", []))
+
+        except Exception as e:
+            logger.warning("LLM critique failed (%s). Using algorithmic audit only.", e)
+
+    # ------------------------------------------------------------------
+    # 3. Determine validity and build result
+    # ------------------------------------------------------------------
     is_valid = True
     if has_unsupported:
         is_valid = False
     elif (has_contra or has_stale) and revision_count == 0:
-        # Require one revision cycle so synthesizer addresses the conflict explicitly
         is_valid = False
 
     critique = CritiqueResult(
         has_contradiction=has_contra,
-        contradiction_details=list(set(contra_details)),
+        contradiction_details=list(dict.fromkeys(contra_details)),
         has_staleness=has_stale,
-        staleness_details=list(set(stale_details)),
+        staleness_details=list(dict.fromkeys(stale_details)),
         has_unsupported_claims=has_unsupported,
         unsupported_claims=unsupported_claims,
         is_valid=is_valid

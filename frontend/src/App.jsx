@@ -224,6 +224,28 @@ export default function App() {
     signature_verified: true,
   });
 
+  // Cache Monitor
+  const [cacheStats, setCacheStats] = useState(null);
+  const [showCacheModal, setShowCacheModal] = useState(false);
+  const [cacheLoading, setCacheLoading] = useState(false);
+
+  async function fetchCacheStats() {
+    setCacheLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/cache_stats`);
+      if (res.ok) setCacheStats(await res.json());
+    } catch (e) { /* backend may not be ready yet */ }
+    finally { setCacheLoading(false); }
+  }
+
+  // Auto-refresh cache stats every 5s when the modal is open
+  useEffect(() => {
+    if (!showCacheModal) return;
+    fetchCacheStats();
+    const id = setInterval(fetchCacheStats, 5000);
+    return () => clearInterval(id);
+  }, [showCacheModal]);
+
   // System Health
   const [health, setHealth] = useState({ online: false, provider: 'gemini', total_documents: 0 });
 
@@ -496,6 +518,26 @@ export default function App() {
             }}
           >
             🩺 {healthLoading ? 'Scanning Corpus...' : 'Scan Corpus Health'}
+          </button>
+
+          <button
+            onClick={() => { setShowCacheModal(true); fetchCacheStats(); }}
+            title="View live cache hit/miss statistics"
+            style={{
+              background: 'rgba(245, 158, 11, 0.1)',
+              border: '1px solid rgba(245, 158, 11, 0.35)',
+              color: '#F59E0B',
+              borderRadius: '8px',
+              padding: '8px 14px',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            ⚡ Cache Monitor
           </button>
 
           <button
@@ -1393,6 +1435,166 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ── Cache Monitor Modal ── */}
+      {showCacheModal && (
+        <div
+          onClick={() => setShowCacheModal(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)',
+            backdropFilter: 'blur(6px)', zIndex: 9999,
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'linear-gradient(160deg, #0F1E33 0%, #07111F 100%)',
+              border: '1px solid rgba(245, 158, 11, 0.3)',
+              borderRadius: '20px',
+              padding: '32px',
+              width: '560px',
+              maxWidth: '95vw',
+              boxShadow: '0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(245,158,11,0.1)',
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: '40px', height: '40px', borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #F59E0B 0%, #FBBF24 100%)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '20px', boxShadow: '0 4px 14px rgba(245,158,11,0.35)'
+                }}>⚡</div>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#F8FAFC' }}>Cache Monitor</h2>
+                  <p style={{ margin: 0, fontSize: '11px', color: '#94A3B8', marginTop: '2px' }}>
+                    {cacheLoading ? '🔄 Refreshing...' : '✓ Auto-refreshes every 5s while open'}
+                  </p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  id="cache-refresh-btn"
+                  onClick={fetchCacheStats}
+                  disabled={cacheLoading}
+                  style={{
+                    background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)',
+                    color: '#F59E0B', borderRadius: '8px', padding: '6px 12px',
+                    fontSize: '11px', fontWeight: 600, cursor: cacheLoading ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {cacheLoading ? '...' : '↻ Refresh'}
+                </button>
+                <button
+                  id="cache-close-btn"
+                  onClick={() => setShowCacheModal(false)}
+                  style={{
+                    background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(148,163,184,0.2)',
+                    color: '#94A3B8', borderRadius: '8px', padding: '6px 12px',
+                    fontSize: '11px', fontWeight: 600, cursor: 'pointer'
+                  }}
+                >✕ Close</button>
+              </div>
+            </div>
+
+            {!cacheStats ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#64748B' }}>
+                {cacheLoading ? '🔄 Loading cache statistics...' : '⚠️ Could not reach backend. Is the server running?'}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {[
+                  ['llm_cache',    '🧠 LLM Response Cache',          '#A5B4FC', '#6366F1', '99,102,241'],
+                  ['search_cache', '🔍 Search / Retrieval Cache',     '#67E8F9', '#06B6D4', '6,182,212'],
+                ].map(([key, label, textColor, glowColor, rgb]) => {
+                  const s = cacheStats[key];
+                  if (!s) return null;
+                  const pct = s.hit_rate_pct;
+                  const radius = 36;
+                  const circ = 2 * Math.PI * radius;
+                  const dash = (pct / 100) * circ;
+                  return (
+                    <div key={key} style={{
+                      background: 'rgba(255,255,255,0.04)',
+                      border: `1px solid rgba(${rgb},0.2)`,
+                      borderRadius: '14px', padding: '20px',
+                      display: 'flex', alignItems: 'center', gap: '20px'
+                    }}>
+                      {/* Circular hit-rate dial */}
+                      <div style={{ position: 'relative', flexShrink: 0, width: '96px', height: '96px' }}>
+                        <svg width="96" height="96" viewBox="0 0 96 96" style={{ transform: 'rotate(-90deg)', position: 'absolute', top: 0, left: 0 }}>
+                          <circle cx="48" cy="48" r={radius} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="8" />
+                          <circle
+                            cx="48" cy="48" r={radius} fill="none"
+                            stroke={textColor} strokeWidth="8"
+                            strokeDasharray={`${dash} ${circ - dash}`}
+                            strokeLinecap="round"
+                            style={{ filter: `drop-shadow(0 0 6px ${textColor})`, transition: 'stroke-dasharray 0.6s ease' }}
+                          />
+                        </svg>
+                        <div style={{
+                          position: 'absolute', inset: 0, display: 'flex',
+                          alignItems: 'center', justifyContent: 'center', flexDirection: 'column'
+                        }}>
+                          <span style={{ fontSize: '18px', fontWeight: 800, color: textColor, lineHeight: 1 }}>{pct}%</span>
+                          <span style={{ fontSize: '9px', color: '#64748B', fontWeight: 600, textTransform: 'uppercase', marginTop: '2px' }}>Hit Rate</span>
+                        </div>
+                      </div>
+
+                      {/* Stats */}
+                      <div style={{ flex: 1 }}>
+                        <p style={{ margin: '0 0 12px', fontWeight: 700, fontSize: '14px', color: '#F8FAFC' }}>{label}</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                          {[[s.hits, 'Hits', '#10B981'], [s.misses, 'Misses', '#EF4444'], [`${s.size}/${s.maxsize}`, 'Size', '#F59E0B']].map(([val, name, col]) => (
+                            <div key={name} style={{
+                              background: 'rgba(255,255,255,0.03)',
+                              border: '1px solid rgba(148,163,184,0.1)',
+                              borderRadius: '8px', padding: '8px 10px', textAlign: 'center'
+                            }}>
+                              <div style={{ fontSize: '20px', fontWeight: 800, color: col, lineHeight: 1 }}>{val}</div>
+                              <div style={{ fontSize: '10px', color: '#64748B', fontWeight: 600, textTransform: 'uppercase', marginTop: '4px' }}>{name}</div>
+                            </div>
+                          ))}
+                        </div>
+                        {/* Hit-rate progress bar */}
+                        <div style={{ marginTop: '10px', background: 'rgba(255,255,255,0.06)', borderRadius: '99px', height: '4px', overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${pct}%`, height: '100%',
+                            background: `linear-gradient(90deg, ${textColor}, ${glowColor})`,
+                            borderRadius: '99px', boxShadow: `0 0 8px ${textColor}`,
+                            transition: 'width 0.6s ease'
+                          }} />
+                        </div>
+                        <p style={{ margin: '6px 0 0', fontSize: '10px', color: '#64748B' }}>
+                          {s.hits + s.misses === 0
+                            ? 'No requests yet — run a query to populate the cache.'
+                            : `${s.hits + s.misses} total requests since server start`}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* How-to tip */}
+                <div style={{
+                  background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.2)',
+                  borderRadius: '10px', padding: '12px 16px', fontSize: '12px', color: '#D97706', lineHeight: '1.6'
+                }}>
+                  <strong style={{ color: '#F59E0B' }}>💡 How to verify cache is working:</strong>
+                  <ol style={{ margin: '6px 0 0', paddingLeft: '16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <li>Run any query — <em>Misses</em> go up (cache cold).</li>
+                    <li>Run the <strong>same query again</strong> — <em>Hits</em> go up, misses stay same ✅</li>
+                    <li>Upload a new document — both caches reset to 0 (invalidation) ✅</li>
+                  </ol>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

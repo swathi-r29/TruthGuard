@@ -3,6 +3,7 @@ import hashlib
 from typing import Dict, Any, List
 from modules.schemas import GraphState, PassageChunk
 import modules.vector_store as vs
+import modules.cache as _cache
 
 def _normalize_text_for_dedup(text: str) -> str:
     """Normalize text by stripping whitespace and punctuation for echo chamber defense."""
@@ -27,8 +28,15 @@ def retriever_node(state: GraphState) -> Dict[str, Any]:
             if match_year:
                 target_date = f"{match_year.group(1)}-12-31"
 
-    # Semantic search in ChromaDB
-    passages = vs.vector_store.search_passages(query=question, n_results=20)
+    # -- Search cache lookup (query + target_date composite key) ----------
+    # target_date MUST be part of the key to prevent Time-Travel Query collisions:
+    #   "What is leave entitlement?" @ 2023-05-10  !=
+    #   "What is leave entitlement?" @ None (latest)
+    _n_results = 20
+    passages = _cache.search_cache.get_passages(question, target_date)
+    if passages is None:
+        passages = vs.vector_store.search_passages(query=question, n_results=_n_results)
+        _cache.search_cache.set_passages(question, target_date, passages)
 
     # Time-travel historical filter: exclude amendments/policies issued AFTER target_date
     if target_date:

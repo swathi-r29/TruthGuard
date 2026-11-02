@@ -16,6 +16,7 @@ from modules.schemas import (
 from modules.document_processor import process_document
 from modules.vector_store import vector_store
 from modules.graph import truthguard_graph
+from modules.cache import clear_all_caches, get_cache_stats
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("truthguard.api")
@@ -66,18 +67,20 @@ def list_documents():
 @app.delete("/api/documents")
 def clear_documents():
     """
-    Clears all documents from vector store.
+    Clears all documents from vector store and invalidates all caches.
     """
     vector_store.clear()
+    clear_all_caches()
     return {"success": True, "message": "All documents cleared from TruthGuard vector store."}
 
 @app.post("/api/seed_samples")
 def seed_samples_endpoint():
     """
-    Seeds the test corpus documents into the vector store.
+    Seeds the test corpus documents into the vector store and invalidates all caches.
     """
     from seed_samples import seed_sample_corpus
     seed_sample_corpus()
+    clear_all_caches()
     return {"success": True, "total_documents": len(vector_store.get_all_documents())}
 
 @app.post("/api/upload")
@@ -134,6 +137,9 @@ async def upload_document(
         )
 
         chunk_count = vector_store.add_document(meta, full_text)
+
+        # Invalidate search cache: new/updated document changes retrieval results
+        clear_all_caches()
 
         return {
             "success": True,
@@ -245,6 +251,14 @@ def scan_corpus_health():
         "staleness": unique_stale,
         "ghost_references": unique_ghost
     }
+
+@app.get("/api/cache_stats")
+def cache_stats():
+    """
+    Returns hit/miss statistics for the LLM response cache and search cache.
+    Useful for monitoring cache efficiency during development and demos.
+    """
+    return get_cache_stats()
 
 if __name__ == "__main__":
     import uvicorn

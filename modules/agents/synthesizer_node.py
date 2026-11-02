@@ -3,6 +3,7 @@ import logging
 from typing import Dict, Any, List
 from modules.schemas import GraphState, PassageChunk
 from modules.llm import get_llm
+from modules.cache import llm_cache
 
 logger = logging.getLogger("truthguard.synthesizer")
 
@@ -123,8 +124,16 @@ def synthesizer_node(state: GraphState) -> Dict[str, Any]:
                 passages_text=_format_passages_for_prompt(passages),
                 revision_instructions=revision_instructions
             )
-            response = llm.invoke(prompt)
-            draft = response.content.strip()
+            # -- LLM response cache check --
+            # Key = SHA-256(prompt) which encodes question + all passage
+            # content + revision instructions — collision-resistant.
+            cached_draft = llm_cache.get_response(prompt)
+            if cached_draft is not None:
+                draft = cached_draft
+            else:
+                response = llm.invoke(prompt)
+                draft = response.content.strip()
+                llm_cache.set_response(prompt, draft)
         except Exception as e:
             logger.error(f"Synthesizer LLM invocation error: {e}. Falling back to deterministic synthesizer.")
             draft = _deterministic_synthesis(passages, question, target_date, critique)
